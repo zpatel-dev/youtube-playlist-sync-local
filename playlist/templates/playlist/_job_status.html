@@ -1,0 +1,9 @@
+{# Active-job indicator. Rendered on first load and pushed live via SSE ("jobs" event). #}
+{% if active_jobs %}
+    <span class="badge text-bg-info d-inline-flex align-items-center gap-1">
+        <span class="spinner-border spinner-border-sm" style="width:.7rem;height:.7rem;" role="status"></span>
+        {{ active_jobs|length }} job{{ active_jobs|length|pluralize }} running
+    </span>
+{% else %}
+    <span class="badge text-bg-light text-muted border">Idle</span>
+{% endif %}

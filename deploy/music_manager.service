@@ -1,0 +1,24 @@
+[Unit]
+Description=Music Manager — Django web + inline job workers (UI, SSE, downloads)
+After=network.target
+
+[Service]
+User=pi
+WorkingDirectory=/home/pi/Desktop/py_music_manager
+EnvironmentFile=/home/pi/Desktop/py_music_manager/.env
+# gunicorn threaded worker: --threads serves SSE (one thread per open dashboard)
+# and normal requests. The background job threads run INSIDE this process, so:
+#   * keep --workers 1 (each extra process = another worker pool)
+#   * do NOT use --preload (threads don't survive gunicorn's fork)
+# Scale job concurrency with WORKER_THREADS in .env, not --workers.
+ExecStart=/home/pi/Desktop/py_music_manager/.venv/bin/gunicorn music_manager.wsgi:application \
+    -k gthread \
+    --threads 8 \
+    --workers 1 \
+    --bind 0.0.0.0:8000 \
+    --timeout 120
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target

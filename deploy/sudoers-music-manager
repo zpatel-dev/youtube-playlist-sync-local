@@ -1,0 +1,4 @@
+# Lets the "Update yt-dlp" button restart the service without a password prompt.
+# Install with:  sudo visudo -f /etc/sudoers.d/music-manager
+# (adjust the user "pi" and service name if you changed them)
+pi ALL=(root) NOPASSWD: /bin/systemctl restart music_manager

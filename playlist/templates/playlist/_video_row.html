@@ -1,0 +1,78 @@
+{% load playlist_extras %}
+{% comment %}One dashboard row. Included on first load and by the rows fragment on SSE update.{% endcomment %}
+<tr>
+    <td class="ps-3 title-cell">
+        <div class="d-flex flex-column">
+            <a href="{{ video.url }}" target="_blank" class="fw-bold text-dark text-decoration-none text-truncate-2" title="{{ video.title }}">
+                {{ video.title }}
+            </a>
+            <small class="text-muted text-truncate">
+                {{ video.uploader }}{% if video.duration %} <span class="text-secondary">· {{ video.duration|duration }}</span>{% endif %}
+            </small>
+        </div>
+    </td>
+
+    <td data-label="YT">
+        {% if video.status == "AVAILABLE" %}
+            <span class="badge bg-success-subtle text-success border border-success-subtle rounded-1 fw-normal" style="font-size: 0.75rem;">Available</span>
+        {% else %}
+            <span class="badge bg-danger-subtle text-danger border border-danger-subtle rounded-1 fw-normal" style="font-size: 0.75rem;">{{ video.get_status_display }}</span>
+        {% endif %}
+    </td>
+
+    <td data-label="Local">
+        {% with track=video.local_track %}
+            {% if track %}
+                <div class="d-flex flex-column align-items-end align-items-md-start">
+                    {% if track.processing_status == "COMPLETED" %}
+                        <span class="d-flex align-items-center gap-1 text-primary small fw-medium">
+                            <i class="bi bi-check-circle-fill"></i> {{ track.get_processing_status_display }}
+                        </span>
+                        {% if track.local_path %}<small class="text-muted text-truncate track-filename" title="{{ track.local_path }}">{{ track.local_path|basename }}</small>{% endif %}
+                        {% if track.downloaded_at %}<small class="text-muted" style="font-size: .68rem;"><i class="bi bi-download"></i> {{ track.downloaded_at|date:"M j, Y" }}</small>{% endif %}
+                    {% elif track.processing_status == "FAILED" %}
+                        <span class="d-flex align-items-center gap-1 text-danger small fw-bold">
+                            <i class="bi bi-x-circle-fill"></i> {{ track.get_processing_status_display }}
+                        </span>
+                        <small class="text-danger" style="font-size: .68rem;">
+                            {% if track.fail_count %}attempt ×{{ track.fail_count }}{% endif %}{% if track.retry_at %} · retry {{ track.retry_at|date:"M j, H:i" }}{% endif %}
+                        </small>
+                    {% else %}
+                        <span class="d-flex align-items-center gap-1 text-info-emphasis small fw-medium bg-info-subtle px-2 py-0 rounded">
+                            <div class="spinner-border spinner-border-sm" style="width: 0.6rem; height: 0.6rem;" role="status"></div>
+                            {{ track.get_processing_status_display }}
+                        </span>
+                    {% endif %}
+                </div>
+            {% else %}
+                <span class="text-muted small fst-italic opacity-50">Not Processed</span>
+            {% endif %}
+        {% endwith %}
+    </td>
+
+    <td class="text-end pe-3" data-label="Actions">
+        {% with track=video.local_track %}
+            <div class="d-flex justify-content-end gap-1 action-group">
+                {% if not track %}
+                    <button hx-post="{% url 'trigger_download' video.id %}" hx-swap="none"
+                            class="btn btn-icon btn-sm btn-outline-success" title="Download">
+                        <i class="bi bi-download"></i>
+                    </button>
+                {% elif track.processing_status == "FAILED" %}
+                    <button hx-post="{% url 'trigger_retry' video.id %}" hx-swap="none"
+                            class="btn btn-icon btn-sm btn-outline-warning" title="Retry">
+                        <i class="bi bi-arrow-clockwise"></i>
+                    </button>
+                {% endif %}
+
+                {% if track %}
+                    <button hx-post="{% url 'delete_track' video.id %}" hx-swap="none"
+                            hx-confirm="Delete the local file for this track?"
+                            class="btn btn-icon btn-sm btn-outline-danger" title="Delete">
+                        <i class="bi bi-trash"></i>
+                    </button>
+                {% endif %}
+            </div>
+        {% endwith %}
+    </td>
+</tr>

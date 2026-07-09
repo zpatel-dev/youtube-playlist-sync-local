@@ -1,0 +1,86 @@
+{% load static %}
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Music Manager Dashboard</title>
+
+    {# Self-hosted assets — no CDN round-trips, served + gzipped by WhiteNoise #}
+    <link href="{% static 'vendor/bootstrap/bootstrap.min.css' %}" rel="stylesheet">
+    <link href="{% static 'vendor/bootstrap-icons/bootstrap-icons.css' %}" rel="stylesheet">
+
+    <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='100' height='100' rx='20' fill='%231DB954'/><path d='M40 30v40l30-20z' fill='white'/></svg>">
+    <style>
+        body { background-color: #f8f9fa; }
+        .status-badge { font-size: 0.8em; }
+        #toast-container { z-index: 1100; }
+        /* Live-updates (SSE) connection indicator: red until connected, then green. */
+        .sse-dot {
+            display: inline-block; width: 9px; height: 9px; border-radius: 50%;
+            background: #dc3545; box-shadow: 0 0 0 3px rgba(220,53,69,.15);
+            transition: background .3s, box-shadow .3s; vertical-align: middle; flex: 0 0 auto;
+        }
+        .sse-dot.connected { background: #198754; box-shadow: 0 0 0 3px rgba(25,135,84,.18); }
+    </style>
+
+    {# htmx handles instant, non-blocking actions + SSE live updates #}
+    <script src="{% static 'vendor/htmx/htmx.min.js' %}" defer></script>
+    <script src="{% static 'vendor/htmx/sse.js' %}" defer></script>
+    <script src="{% static 'vendor/bootstrap/bootstrap.bundle.min.js' %}" defer></script>
+</head>
+{# The CSRF token rides on every htmx request via this header (no per-form hidden field needed) #}
+<body hx-headers='{"X-CSRFToken": "{{ csrf_token }}"}'>
+    <nav class="navbar navbar-dark bg-dark">
+        <div class="container-fluid d-flex justify-content-between align-items-center">
+            <a class="navbar-brand mb-0" href="{% url 'video_dashboard' %}">YouTube Playlist Sync Dashboard</a>
+            <span class="d-flex align-items-center gap-2 small text-white-50" title="Live-updates connection">
+                <span id="sse-dot" class="sse-dot"></span>
+                <span id="sse-label">Connecting…</span>
+            </span>
+        </div>
+    </nav>
+
+    <main class="container mt-4">
+    {% block content %}{% endblock %}
+    </main>
+
+    {# Live toast notifications (fired by HX-Trigger response headers) #}
+    <div id="toast-container" class="toast-container position-fixed bottom-0 end-0 p-3"></div>
+
+    <script>
+        function showToast(detail) {
+            var level = (detail && detail.level) || 'primary';
+            var msg = (detail && detail.message) || '';
+            var el = document.createElement('div');
+            el.className = 'toast align-items-center text-bg-' + level + ' border-0';
+            el.setAttribute('role', 'alert');
+            el.innerHTML =
+                '<div class="d-flex">' +
+                '<div class="toast-body">' + msg + '</div>' +
+                '<button type="button" class="btn-close btn-close-white me-2 m-auto" data-bs-dismiss="toast"></button>' +
+                '</div>';
+            document.getElementById('toast-container').appendChild(el);
+            var t = new bootstrap.Toast(el, { delay: 4000, autohide: true });
+            t.show();
+            // Guarantee dismissal: on touch devices Bootstrap's autohide timer can be
+            // paused by "sticky hover"/focus, leaving the toast stuck. Force-hide as a backup.
+            setTimeout(function () { try { t.hide(); } catch (e) { el.remove(); } }, 4500);
+            el.addEventListener('hidden.bs.toast', function () { el.remove(); });
+        }
+        // htmx dispatches a "notify" DOM event for the {"notify": {...}} HX-Trigger header
+        document.body.addEventListener('notify', function (e) { showToast(e.detail); });
+
+        // Live-updates connection indicator in the navbar: green "Live" when the SSE
+        // stream is open, red "Reconnecting…" when it drops.
+        function setSseStatus(ok) {
+            var d = document.getElementById('sse-dot');
+            if (d) d.classList.toggle('connected', ok);
+            var l = document.getElementById('sse-label');
+            if (l) l.textContent = ok ? 'Live' : 'Reconnecting…';
+        }
+        document.body.addEventListener('htmx:sseOpen', function () { setSseStatus(true); });
+        document.body.addEventListener('htmx:sseError', function () { setSseStatus(false); });
+    </script>
+</body>
+</html>
