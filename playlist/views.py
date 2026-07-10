@@ -14,10 +14,26 @@ from rest_framework import permissions, viewsets
 from .models import Job, LocalTrack, Video
 from .serializers import LocalTrackSerializer, VideoSerializer
 from .services.job_service import enqueue, enqueue_download
+from .utils import env_file
 
 logger = logging.getLogger("django")
 
 ACTIVE_JOB_STATUSES = [Job.Status.QUEUED, Job.Status.RUNNING]
+
+# Which .env keys the Settings panel may edit. Deployment paths (YTDLP_PATH, PIP_PATH,
+# PROJECT_BASE_DIR, SYSTEMD_SERVICE) are intentionally left out — editing them from the
+# UI would be an easy way to break the subprocess/restart calls.
+ENV_FIELDS = [
+    ("PLAYLIST_URL", "Playlist URL", "text", "The YouTube playlist to mirror."),
+    ("OUTPUT_DIRECTORY", "Output directory", "text", "Where downloaded mp3s are saved."),
+    ("WORKER_THREADS", "Worker threads", "number", "Background job concurrency."),
+    ("WORKER_POLL_SECONDS", "Worker poll (s)", "number", "How often a worker checks for jobs."),
+    ("WORKER_COOLDOWN_SECONDS", "Worker cooldown (s)", "number", "Pause after a download/resync."),
+    ("SSE_POLL_SECONDS", "Live-update poll (s)", "number", "Dashboard change-check cadence."),
+    ("DJANGO_LOG_LEVEL", "Log level", "text", "DEBUG / INFO / WARNING / ERROR."),
+]
+# Secret: never sent to the browser, only ever written.
+ENV_SECRET = ("GEMINI_API_KEY", "Gemini API Key", "Used only for the AI tagging fallback.")
 
 
 # --------------------------------------------------------------------------- #
@@ -192,6 +208,65 @@ def update_ytdlp(request):
 def process_tagging_tracks(request):
     enqueue(Job.JobType.TAG_ALL)
     return _hx_notify("Tagging queued for all pending tracks.", "info")
+
+
+# --------------------------------------------------------------------------- #
+# Settings — view/update the .env from the dashboard
+# --------------------------------------------------------------------------- #
+def settings_form(request):
+    """Render the Settings modal body with current .env values (Gemini key masked)."""
+    current = env_file.read_env()
+    fields = [
+        {"key": key, "label": label, "type": ftype, "help": help_text,
+         "value": current.get(key, "")}
+        for key, label, ftype, help_text in ENV_FIELDS
+    ]
+    secret = {
+        "key": ENV_SECRET[0], "label": ENV_SECRET[1], "help": ENV_SECRET[2],
+        "is_set": bool(current.get(ENV_SECRET[0])),  # never expose the value itself
+    }
+    return render(request, "playlist/_settings_form.html", {"fields": fields, "secret": secret})
+
+
+@require_POST
+def update_env_view(request):
+    """Persist submitted .env values. Blank fields are left unchanged (so the masked
+    Gemini key is only overwritten when a new one is typed)."""
+    updates, invalid = {}, []
+    for key, label, ftype, _help in ENV_FIELDS:
+        value = request.POST.get(key, "").strip()
+        if not value:
+            continue  # blank = keep current
+        if ftype == "number":
+            try:
+                float(value)
+            except ValueError:
+                invalid.append(label)
+                continue
+        updates[key] = value
+
+    secret_value = request.POST.get(ENV_SECRET[0], "").strip()
+    if secret_value:
+        updates[ENV_SECRET[0]] = secret_value
+
+    if invalid:
+        return _hx_notify(f"Not a number: {', '.join(invalid)}", "danger")
+    if not updates:
+        return _hx_notify("Nothing to update.", "info")
+
+    try:
+        env_file.update_env(updates)
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("Failed to write .env")
+        return _hx_notify(f"Could not save settings: {exc}", "danger")
+
+    resp = HttpResponse(status=204)
+    resp["HX-Trigger"] = json.dumps({
+        "notify": {"level": "success",
+                   "message": "Settings saved — restart the service to apply."},
+        "closeSettings": True,
+    })
+    return resp
 
 
 # --------------------------------------------------------------------------- #

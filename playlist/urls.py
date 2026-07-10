@@ -21,6 +21,10 @@ urlpatterns = [
     path('fragments/jobs/', views.job_status, name='job_status'),
     path('ytdlp-version/', views.ytdlp_version, name='ytdlp_version'),
 
+    # Settings (.env editor)
+    path('settings/', views.settings_form, name='settings_form'),
+    path('actions/update-env/', views.update_env_view, name='update_env'),
+
     # Action URLs (all enqueue a background Job and return immediately)
     path('actions/resync-playlist/', views.trigger_resync, name='trigger_resync'),
     path('actions/video/<str:pk>/download/', views.trigger_download, name='trigger_download'),

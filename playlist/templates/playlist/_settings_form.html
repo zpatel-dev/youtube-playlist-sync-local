@@ -1,0 +1,39 @@
+{# Settings modal body — loaded via htmx when the gear button is clicked. #}
+<form hx-post="{% url 'update_env' %}" hx-swap="none" autocomplete="off">
+    <p class="small text-muted mb-3">
+        <i class="bi bi-info-circle"></i>
+        These are saved to <code>.env</code>. Changes take effect after the service restarts
+        (use <strong>Update &amp; Restart</strong>).
+    </p>
+
+    {% for f in fields %}
+    <div class="mb-3">
+        <label for="env-{{ f.key }}" class="form-label small fw-bold mb-1">{{ f.label }}</label>
+        <input type="{{ f.type }}" id="env-{{ f.key }}" name="{{ f.key }}"
+               value="{{ f.value }}" class="form-control form-control-sm"
+               {% if f.type == 'number' %}step="any"{% endif %}>
+        {% if f.help %}<div class="form-text small">{{ f.help }}</div>{% endif %}
+    </div>
+    {% endfor %}
+
+    {# Secret: value is never sent to the browser; blank on submit keeps the current key. #}
+    <div class="mb-3">
+        <label for="env-{{ secret.key }}" class="form-label small fw-bold mb-1">
+            {{ secret.label }}
+            {% if secret.is_set %}
+                <span class="badge bg-success-subtle text-success border ms-1">set</span>
+            {% else %}
+                <span class="badge bg-danger-subtle text-danger border ms-1">not set</span>
+            {% endif %}
+        </label>
+        <input type="password" id="env-{{ secret.key }}" name="{{ secret.key }}" value=""
+               autocomplete="new-password" class="form-control form-control-sm"
+               placeholder="{% if secret.is_set %}•••••••• — leave blank to keep{% else %}Enter API key{% endif %}">
+        <div class="form-text small">{{ secret.help }}</div>
+    </div>
+
+    <div class="d-flex justify-content-end gap-2 pt-1">
+        <button type="button" class="btn btn-sm btn-secondary" data-bs-dismiss="modal">Cancel</button>
+        <button type="submit" class="btn btn-sm btn-primary"><i class="bi bi-save"></i> Save</button>
+    </div>
+</form>

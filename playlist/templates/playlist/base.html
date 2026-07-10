@@ -34,16 +34,41 @@
     <nav class="navbar navbar-dark bg-dark">
         <div class="container-fluid d-flex justify-content-between align-items-center">
             <a class="navbar-brand mb-0" href="{% url 'video_dashboard' %}">YouTube Playlist Sync Dashboard</a>
-            <span class="d-flex align-items-center gap-2 small text-white-50" title="Live-updates connection">
-                <span id="sse-dot" class="sse-dot"></span>
-                <span id="sse-label">Connecting…</span>
-            </span>
+            <div class="d-flex align-items-center gap-3">
+                {# Loads the fresh .env form into the modal each time it's opened. #}
+                <button type="button" class="btn btn-sm btn-outline-light d-flex align-items-center gap-1"
+                        data-bs-toggle="modal" data-bs-target="#settingsModal"
+                        hx-get="{% url 'settings_form' %}" hx-target="#settings-modal-body" hx-trigger="click">
+                    <i class="bi bi-gear"></i> Settings
+                </button>
+                <span class="d-flex align-items-center gap-2 small text-white-50" title="Live-updates connection">
+                    <span id="sse-dot" class="sse-dot"></span>
+                    <span id="sse-label">Connecting…</span>
+                </span>
+            </div>
         </div>
     </nav>
 
     <main class="container mt-4">
     {% block content %}{% endblock %}
     </main>
+
+    {# Settings (.env editor) — body is fetched by htmx on open (see the navbar gear button). #}
+    <div class="modal fade" id="settingsModal" tabindex="-1" aria-labelledby="settingsModalLabel" aria-hidden="true">
+        <div class="modal-dialog modal-dialog-centered modal-dialog-scrollable">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title" id="settingsModalLabel"><i class="bi bi-gear-fill"></i> Settings</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <div class="modal-body" id="settings-modal-body">
+                    <div class="text-center text-muted py-4">
+                        <span class="spinner-border spinner-border-sm"></span> Loading…
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
 
     {# Live toast notifications (fired by HX-Trigger response headers) #}
     <div id="toast-container" class="toast-container position-fixed bottom-0 end-0 p-3"></div>
@@ -70,6 +95,15 @@
         }
         // htmx dispatches a "notify" DOM event for the {"notify": {...}} HX-Trigger header
         document.body.addEventListener('notify', function (e) { showToast(e.detail); });
+
+        // Close the Settings modal after a successful save (HX-Trigger: {"closeSettings": true})
+        document.body.addEventListener('closeSettings', function () {
+            var m = document.getElementById('settingsModal');
+            if (m && window.bootstrap) {
+                var inst = bootstrap.Modal.getInstance(m);
+                if (inst) inst.hide();
+            }
+        });
 
         // Live-updates connection indicator in the navbar: green "Live" when the SSE
         // stream is open, red "Reconnecting…" when it drops.
