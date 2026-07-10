@@ -1,22 +1,35 @@
 [Unit]
-Description=Music Manager — Django web + inline job workers (UI, SSE, downloads)
+Description=Gunicorn instance to serve music_manager
 After=network.target
+# --- NEW: PREVENTION OF RESTART LOOPS ---
+# If the service restarts 5 times within 60 seconds, stop trying.
+StartLimitIntervalSec=100
+StartLimitBurst=5
 
 [Service]
+# Run as the pi user so you don't have permission issues with files on Desktop
 User=pi
+Group=pi
+
+# The folder where your manage.py lives
 WorkingDirectory=/home/pi/Desktop/py_music_manager
-EnvironmentFile=/home/pi/Desktop/py_music_manager/.env
-# gunicorn threaded worker: --threads serves SSE (one thread per open dashboard)
-# and normal requests. The background job threads run INSIDE this process, so:
-#   * keep --workers 1 (each extra process = another worker pool)
-#   * do NOT use --preload (threads don't survive gunicorn's fork)
-# Scale job concurrency with WORKER_THREADS in .env, not --workers.
-ExecStart=/home/pi/Desktop/py_music_manager/.venv/bin/gunicorn music_manager.wsgi:application \
-    -k gthread \
-    --threads 8 \
-    --workers 1 \
-    --bind 0.0.0.0:8000 \
-    --timeout 120
+
+# Set the path environment variable to ensure we use the .venv
+Environment="PATH=/home/pi/Desktop/py_music_manager/.venv/bin:/usr/local/bin:/usr/bin:/bin"
+
+# env variables you want to overwrite
+Environment='ENVNAME="value"'
+
+
+# The command to start the server
+# Note: We use the absolute path to gunicorn inside your .venv
+ExecStart=/home/pi/Desktop/py_music_manager/.venv/bin/gunicorn \
+          --workers 1 \
+          --threads 4 \
+          --bind 0.0.0.0:8000 \
+          music_manager.wsgi:application
+
+# Automatically restart the service if it crashes
 Restart=always
 RestartSec=3
 
