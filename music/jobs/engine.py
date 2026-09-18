@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 from datetime import timedelta
+from typing import Any
 
 from django.conf import settings
 from django.db import IntegrityError, transaction
@@ -99,7 +100,9 @@ def heartbeat(job: Job, status: str = "") -> None:
     heartbeats — a progress hook that fires per chunk must not reach here.
     """
     lease_until = timezone.now() + timedelta(seconds=settings.JOB_LEASE_SECONDS)
-    fields = {"lease_expires_at": lease_until}
+    # Annotated: inferred from the first entry alone this is dict[str, datetime],
+    # and the message below is a str.
+    fields: dict[str, Any] = {"lease_expires_at": lease_until}
     if status:
         fields["message"] = status[:2000]
     Job.objects.filter(id=job.pk, state=JobState.RUNNING).update(**fields)

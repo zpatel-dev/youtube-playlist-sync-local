@@ -355,7 +355,8 @@ class DownloadTests(TestCase):
             youtube.download_audio(self.video, self.dest)
 
         post = holder["ydl"].opts["postprocessors"]
-        self.assertEqual(len(post), 1)
+        # The AUDIO step is the remuxer; the tagging steps that follow it are
+        # asserted in DownloadMetadataTests.
         self.assertEqual(post[0]["key"], "FFmpegVideoRemuxer")
         self.assertEqual(post[0]["preferedformat"], "opus")
         keys = [p["key"] for p in post]
@@ -368,7 +369,6 @@ class DownloadTests(TestCase):
         with patcher:
             youtube.download_audio(self.video, self.dest)
         post = holder["ydl"].opts["postprocessors"]
-        self.assertEqual(len(post), 1)
         self.assertEqual(post[0]["key"], "FFmpegExtractAudio")
         self.assertEqual(post[0]["preferredcodec"], "mp3")
         self.assertEqual(post[0]["preferredquality"], "192")
@@ -543,3 +543,84 @@ class PendingDownloadsTests(TestCase):
             retry_at=timezone.now() + timedelta(hours=1),
         )
         self.assertEqual(youtube.pending_downloads().count(), 0)
+
+
+@override_settings(AUDIO_QUALITY="192", FFMPEG_LOCATION="", AUDIO_FORMAT="mp3")
+class DownloadMetadataTests(TestCase):
+    """YouTube's own tags and cover art are written into the file.
+
+    This is what the identification chain runs on: without it every provider
+    sees nothing but the video title, which is how "Shararatein (Chitthi Song)"
+    reached Gemini as a bare string and came back unidentified.
+    """
+
+    def setUp(self):
+        import tempfile
+
+        self.dest = Path(tempfile.mkdtemp())
+        self.addCleanup(
+            lambda: __import__("shutil").rmtree(self.dest, ignore_errors=True)
+        )
+        self.video = YoutubeVideo.objects.create(
+            video_id="vid_public0",
+            title="Available Song",
+            url="https://www.youtube.com/watch?v=vid_public0",
+        )
+
+    def _run(self):
+        written = self.dest / "vid_public0.mp3"
+        written.write_bytes(b"audio")
+        info = {
+            "id": self.video.video_id,
+            "requested_downloads": [{"filepath": str(written)}],
+        }
+        patcher, holder = patch_ydl(info)
+        with patcher:
+            youtube.download_audio(self.video, self.dest)
+        return holder["ydl"].opts
+
+    def _keys(self, opts):
+        return [pp["key"] for pp in opts["postprocessors"]]
+
+    def test_metadata_and_artwork_are_embedded_by_default(self):
+        keys = self._keys(self._run())
+        self.assertIn("FFmpegMetadata", keys)
+        self.assertIn("EmbedThumbnail", keys)
+
+    def test_the_thumbnail_is_downloaded(self):
+        self.assertTrue(self._run()["writethumbnail"])
+
+    def test_webp_thumbnails_are_converted_before_embedding(self):
+        # A WebP cover cannot go into an ID3 APIC frame; without the converter
+        # the embed step silently produces a file with no artwork.
+        keys = self._keys(self._run())
+        self.assertIn("FFmpegThumbnailsConvertor", keys)
+        self.assertLess(
+            keys.index("FFmpegThumbnailsConvertor"), keys.index("EmbedThumbnail")
+        )
+
+    def test_the_audio_is_extracted_before_anything_is_tagged(self):
+        # Tagging a container that does not exist yet writes nothing.
+        keys = self._keys(self._run())
+        self.assertEqual(keys[0], "FFmpegExtractAudio")
+        self.assertLess(keys.index("FFmpegExtractAudio"), keys.index("FFmpegMetadata"))
+
+    def test_tags_are_written_before_the_picture(self):
+        keys = self._keys(self._run())
+        self.assertLess(keys.index("FFmpegMetadata"), keys.index("EmbedThumbnail"))
+
+    @override_settings(YOUTUBE_EMBED_METADATA=False)
+    def test_the_setting_switches_it_off(self):
+        opts = self._run()
+        keys = self._keys(opts)
+        self.assertEqual(keys, ["FFmpegExtractAudio"])
+        self.assertFalse(opts["writethumbnail"])
+
+    @override_settings(AUDIO_FORMAT="native")
+    def test_native_downloads_are_tagged_too(self):
+        # The remuxed Ogg is taggable, which is the whole reason native remuxes
+        # instead of keeping WebM.
+        keys = self._keys(self._run())
+        self.assertEqual(keys[0], "FFmpegVideoRemuxer")
+        self.assertIn("FFmpegMetadata", keys)
+        self.assertIn("EmbedThumbnail", keys)

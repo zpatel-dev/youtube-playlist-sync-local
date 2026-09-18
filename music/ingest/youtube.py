@@ -169,9 +169,14 @@ def list_playlist(url: str) -> list[PlaylistEntry]:
     return entries
 
 
-def _iter_entries(info: dict, *, depth: int = 0) -> Iterator[dict]:
+def _iter_entries(info: Any, *, depth: int = 0) -> Iterator[dict]:
     """Yield flat video entries, descending into nested playlists — a channel
-    URL returns a playlist *of playlists*."""
+    URL returns a playlist *of playlists*.
+
+    `info` is `Any` because yt-dlp hands back its own `_InfoDict`, which is not
+    a plain `dict` to a type checker — as with `_downloaded_path`. Every value
+    read out of it is guarded at the point of use.
+    """
     entries = info.get("entries")
     if entries is None:
         yield info  # a single-video URL
@@ -278,6 +283,50 @@ def pending_downloads(*, limit: int | None = None):
 _slot = threading.Lock()
 
 
+def _postprocessors() -> list[dict[str, Any]]:
+    """The ffmpeg chain yt-dlp runs after the download, in order.
+
+    **Why the metadata steps are on by default.** Without them a download
+    arrives with no tags at all, and the whole identification chain has only
+    the video title to work from: `tags` has nothing to report, the catalogue
+    searches have nothing to look up, and Gemini is left guessing a song from a
+    string like "Shararatein (Chitthi Song)". YouTube already knows the track,
+    artist, album and year for anything it recognises as music — writing that
+    into the file costs one remux and turns a blind guess into a lookup.
+
+    The cover art matters for the same reason it matters in the suggestion
+    panel: it is the one field no text provider returns for an unreleased or
+    regional upload.
+
+    Ordering is deliberate: extract or remux the audio first so there is a
+    taggable container, then write the tags, then embed the picture.
+    """
+    # Annotated because yt-dlp's options mix strings and flags: inferred from
+    # the audio step alone this would be list[dict[str, str]], and appending
+    # `add_metadata: True` below would then be a type error.
+    chain: list[dict[str, Any]]
+    if settings.AUDIO_FORMAT == "mp3":
+        chain = [
+            {
+                "key": "FFmpegExtractAudio",
+                "preferredcodec": "mp3",
+                "preferredquality": str(settings.AUDIO_QUALITY),
+            }
+        ]
+    else:
+        chain = [{"key": "FFmpegVideoRemuxer", "preferedformat": "opus"}]
+
+    if not settings.YOUTUBE_EMBED_METADATA:
+        return chain
+
+    chain.append({"key": "FFmpegMetadata", "add_metadata": True})
+    # YouTube serves WebP thumbnails, which cannot go into an ID3 APIC frame.
+    # One small image decode, nothing like the cost of the audio pass.
+    chain.append({"key": "FFmpegThumbnailsConvertor", "format": "jpg"})
+    chain.append({"key": "EmbedThumbnail", "already_have_thumbnail": False})
+    return chain
+
+
 def download_audio(
     video: YoutubeVideo,
     dest_dir: Path,
@@ -310,17 +359,11 @@ def download_audio(
         # filenames. Remuxing is a container swap with `-c:a copy`, so it keeps
         # the whole point of native (no transcode, no second lossy pass) while
         # producing a file that can actually carry tags.
-        "postprocessors": (
-            [
-                {
-                    "key": "FFmpegExtractAudio",
-                    "preferredcodec": "mp3",
-                    "preferredquality": str(settings.AUDIO_QUALITY),
-                }
-            ]
-            if settings.AUDIO_FORMAT == "mp3"
-            else [{"key": "FFmpegVideoRemuxer", "preferedformat": "opus"}]
-        ),
+        "postprocessors": _postprocessors(),
+        # Fetch the cover image alongside the audio so EmbedThumbnail has
+        # something to embed. Written next to the file and consumed by the
+        # postprocessor, not left behind.
+        "writethumbnail": settings.YOUTUBE_EMBED_METADATA,
         # DASH audio comes as many small fragments; a few in flight keeps the
         # link busy instead of paying a round trip per fragment.
         "concurrent_fragment_downloads": settings.DOWNLOAD_CONCURRENT_FRAGMENTS,

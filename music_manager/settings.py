@@ -175,6 +175,16 @@ AUDIO_FORMAT = env_str(
     "AUDIO_FORMAT", default="mp3", choices=("native", "mp3")
 )
 
+#: Write YouTube's own title/artist/album/year into the downloaded file, and
+#: embed its thumbnail as cover art.
+#:
+#: On by default because it is what the identification chain runs on. A bare
+#: download gives every provider nothing but the video title; with this, the
+#: file's own tags seed `IdentifyContext.existing`, which is what the catalogue
+#: searches query and what Gemini reads before guessing. Costs one extra remux
+#: and a ~50KB image per track, both trivial beside the audio pass.
+YOUTUBE_EMBED_METADATA = env_bool("YOUTUBE_EMBED_METADATA", default=True)
+
 #: DASH audio arrives as many small fragments; a few at once fills the pipe on
 #: a high-latency link. Each costs a socket and a buffer, so keep it modest.
 DOWNLOAD_CONCURRENT_FRAGMENTS = env_int(
