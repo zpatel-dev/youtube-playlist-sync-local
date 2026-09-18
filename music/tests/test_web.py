@@ -31,7 +31,7 @@ from django.urls import reverse
 
 from music import views
 from music.core import envfile, events
-from music.jobs import registry
+from music.jobs import engine, registry
 from music.templatetags import music_extras
 from music.models import Job, JobState, Track, TrackState, YoutubeVideo
 
@@ -47,6 +47,7 @@ ACTION_KINDS = {
     "youtube.sync": "action_sync_youtube",
     "youtube.download": "action_download_video",
     "maintenance.update_ytdlp": "action_update_ytdlp",
+    "library.delete_track": "action_delete_track",
 }
 
 APP_JS = Path(__file__).resolve().parent.parent / "static" / "music" / "app.js"
@@ -832,3 +833,171 @@ class SuggestionPanelDurationTests(SimpleTestCase):
         from music.jobs.handlers.identify import _IDENTIFIED_FIELDS
 
         self.assertNotIn("duration", _IDENTIFIED_FIELDS)
+
+
+class DeleteConfirmationTests(TestCase):
+    """What the panel must tell someone before it destroys a file."""
+
+    def setUp(self):
+        import tempfile
+
+        self.root = Path(tempfile.mkdtemp())
+        self.addCleanup(
+            lambda: __import__("shutil").rmtree(self.root, ignore_errors=True)
+        )
+        audio = self.root / "Artist" / "Album" / "01 - Song.mp3"
+        audio.parent.mkdir(parents=True)
+        audio.write_bytes(b"x" * 4096)
+        self.track = make_track(path=str(audio), track_no=1, year=2018)
+
+    def _get(self):
+        return self.client.get(reverse("fragment_delete_track", args=[self.track.pk]))
+
+    def test_the_panel_names_the_file_and_its_size(self):
+        body = self._get().content.decode()
+        self.assertIn(self.track.path, body)
+        self.assertIn("4.0", body)  # filesizeformat of 4096 bytes
+
+    def test_the_panel_shows_what_the_track_is(self):
+        body = self._get().content.decode()
+        for expected in ("Song", "Artist", "Album", "2018"):
+            with self.subTest(expected=expected):
+                self.assertIn(expected, body)
+
+    def test_a_scanned_track_is_marked_unrecoverable(self):
+        # No YoutubeVideo: nothing records where the file came from.
+        body = self._get().content.decode()
+        self.assertIn("cannot be recovered", body)
+        self.assertIn("no source for this file", body)
+
+    def test_a_youtube_track_gets_a_link_to_remove_it_from_the_playlist(self):
+        YoutubeVideo.objects.create(
+            video_id="abc123",
+            title="Song",
+            url="https://www.youtube.com/watch?v=abc123",
+            track=self.track,
+        )
+        with override_settings(
+            PLAYLIST_URL="https://www.youtube.com/playlist?list=PL_TEST_ID"
+        ):
+            body = self._get().content.decode()
+
+        # The video opened *inside* the playlist, which is where Remove lives.
+        self.assertIn("watch?v=abc123&amp;list=PL_TEST_ID", body)
+        self.assertIn("will download it again", body)
+
+    def test_a_youtube_track_is_not_called_unrecoverable(self):
+        YoutubeVideo.objects.create(
+            video_id="abc123", url="https://youtu.be/abc123", track=self.track
+        )
+        self.assertNotIn("cannot be recovered", self._get().content.decode())
+
+    def test_queued_jobs_for_this_track_are_disclosed(self):
+        engine.enqueue("identify.track", {"track_id": self.track.pk})
+        self.assertIn("Cancel 1 queued job", self._get().content.decode())
+
+    def test_a_job_for_another_track_is_not_counted(self):
+        engine.enqueue("identify.track", {"track_id": self.track.pk + 999})
+        self.assertNotIn("Cancel 1 queued job", self._get().content.decode())
+
+    def test_the_typed_phrase_is_asked_for(self):
+        body = self._get().content.decode()
+        self.assertIn(views.DELETE_PHRASE, body)
+        self.assertIn('name="confirm"', body)
+
+    def test_a_missing_file_is_called_out_rather_than_shown_as_zero_bytes(self):
+        Path(self.track.path).unlink()
+        self.assertIn("already missing from disk", self._get().content.decode())
+
+    def test_an_unknown_track_is_404(self):
+        response = self.client.get(reverse("fragment_delete_track", args=[999999]))
+        self.assertEqual(response.status_code, 404)
+
+
+class DeleteActionTests(TestCase):
+    """The gate on the POST. The browser disables the button; this is the rule."""
+
+    def setUp(self):
+        self.track = make_track()
+        self.url = reverse("action_delete_track", args=[self.track.pk])
+
+    def test_the_right_phrase_queues_the_delete(self):
+        response = self.client.post(self.url, {"confirm": views.DELETE_PHRASE})
+        self.assertEqual(response.status_code, 204)
+        self.assertTrue(
+            Job.objects.filter(kind="library.delete_track").exists()
+        )
+
+    def test_a_wrong_phrase_deletes_nothing(self):
+        response = self.client.post(self.url, {"confirm": "delete please"})
+        self.assertEqual(response.status_code, 204)
+        self.assertFalse(Job.objects.filter(kind="library.delete_track").exists())
+        self.assertIn("Type DELETE", response["HX-Trigger"])
+
+    def test_an_empty_phrase_deletes_nothing(self):
+        self.client.post(self.url, {})
+        self.assertFalse(Job.objects.filter(kind="library.delete_track").exists())
+
+    def test_the_phrase_is_case_sensitive(self):
+        # "delete" is a word someone types by reflex; the capital form is not.
+        self.client.post(self.url, {"confirm": "delete"})
+        self.assertFalse(Job.objects.filter(kind="library.delete_track").exists())
+
+    def test_surrounding_whitespace_is_forgiven(self):
+        self.client.post(self.url, {"confirm": f"  {views.DELETE_PHRASE} "})
+        self.assertTrue(Job.objects.filter(kind="library.delete_track").exists())
+
+    def test_get_is_refused(self):
+        self.assertEqual(self.client.get(self.url).status_code, 405)
+
+    def test_an_unknown_track_is_404(self):
+        response = self.client.post(
+            reverse("action_delete_track", args=[999999]),
+            {"confirm": views.DELETE_PHRASE},
+        )
+        self.assertEqual(response.status_code, 404)
+
+
+class PlaylistIdTests(SimpleTestCase):
+    """Pulling the list id out of whatever URL is configured."""
+
+    def test_a_playlist_url(self):
+        self.assertEqual(
+            views._playlist_id("https://www.youtube.com/playlist?list=PLabc123"),
+            "PLabc123",
+        )
+
+    def test_a_watch_url_carrying_a_list(self):
+        self.assertEqual(
+            views._playlist_id("https://www.youtube.com/watch?v=x&list=PLabc123"),
+            "PLabc123",
+        )
+
+    def test_no_list_parameter(self):
+        self.assertEqual(views._playlist_id("https://www.youtube.com/watch?v=x"), "")
+
+    def test_nothing_configured(self):
+        self.assertEqual(views._playlist_id(""), "")
+
+
+class ProviderFilterTests(TestCase):
+    """`?by=` must know every provider that can stamp a row.
+
+    A name missing from the whitelist is silently dropped and the rows it
+    identified become unfilterable — the same failure the state filter had.
+    """
+
+    def test_every_registered_provider_is_filterable(self):
+        from music.identify import base
+
+        for name in base._provider_classes():
+            with self.subTest(provider=name):
+                self.assertIn(name, views.IDENTIFY_PROVIDERS)
+
+    def test_filtering_by_a_catalogue_provider_works(self):
+        make_track(path="/music/a.mp3", identified_by="itunes")
+        make_track(path="/music/b.mp3", identified_by="gemini")
+        response = self.client.get(reverse("dashboard"), {"by": "itunes"})
+        body = response.content.decode()
+        self.assertIn("/music/a.mp3", body)
+        self.assertNotIn("/music/b.mp3", body)

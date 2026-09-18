@@ -1,0 +1,151 @@
+{% comment %}
+The confirmation for the one irreversible action in the app.
+
+Everything here answers a question someone is entitled to ask before a file is
+destroyed: what is it, where does it live, what did it cost to get, can I get
+it back, and what else moves when it goes. The typed phrase at the bottom is
+the last gate — a disabled button is a suggestion, and `action_delete_track`
+re-checks the phrase server-side.
+{% endcomment %}
+{% load music_extras %}
+
+<div class="suggestion-head">
+    <div class="min-w-0">
+        <div class="fw-semibold text-truncate text-danger-emphasis">
+            <i class="bi bi-trash3"></i> Delete this track?
+        </div>
+        <div class="small text-body-secondary">
+            This cannot be undone.
+        </div>
+    </div>
+    <button type="button" class="btn btn-sm btn-outline-secondary flex-shrink-0"
+            data-close-delete aria-label="Cancel">
+        <i class="bi bi-x-lg"></i>
+    </button>
+</div>
+
+<div class="delete-body">
+
+    {# ---- what it is ---- #}
+    <div class="d-flex gap-3 mb-3">
+        <div class="suggestion-art flex-shrink-0">
+            {% if track.cover_url %}
+                <img src="{{ track.cover_url }}" alt="" loading="lazy" decoding="async"
+                     onerror="this.closest('.suggestion-art').classList.add('cover-missing');this.remove();">
+            {% else %}<i class="bi bi-disc"></i>{% endif %}
+        </div>
+        <div class="min-w-0">
+            <div class="fw-semibold">{% if track.title %}{{ track.title }}{% else %}<span class="fst-italic">{{ track.path|basename }}</span>{% endif %}</div>
+            <div class="small">{{ track.artist|default:"Unknown artist" }}</div>
+            <div class="small text-body-secondary">
+                {% if track.album %}{{ track.album }}{% else %}<span class="fst-italic">no album</span>{% endif %}
+                {% if track.year %}<span class="text-body-tertiary"> · {{ track.year }}</span>{% endif %}
+            </div>
+            <div class="suggestion-meta mt-1">
+                <span class="badge bg-body-secondary text-body-secondary border">{{ track.state }}</span>
+                {% if track.identified_by %}
+                    <span class="badge provider-{{ track.identified_by }}">{{ track.identified_by }}</span>
+                    {% if track.confidence %}<span class="text-body-tertiary">{{ track.confidence|percent }}</span>{% endif %}
+                {% endif %}
+                {% if track.track_no %}
+                    <span class="badge bg-body-secondary text-body-secondary border">
+                        track {% if track.disc_no > 1 %}{{ track.disc_no }}–{% endif %}{{ track.track_no }}
+                    </span>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+
+    {# ---- the file ---- #}
+    <dl class="delete-facts">
+        <dt>File</dt>
+        <dd class="font-monospace text-break">{{ track.path }}</dd>
+
+        <dt>Size</dt>
+        <dd>
+            {% if file_exists %}{{ size_bytes|filesizeformat }}{% else %}
+            <span class="text-warning-emphasis">already missing from disk</span>{% endif %}
+        </dd>
+
+        <dt>Length</dt>
+        <dd>{{ track.duration|hms|default:"unknown" }}{% if track.bitrate %} · {{ track.bitrate }} kbps{% endif %}</dd>
+
+        <dt>Added</dt>
+        <dd>{{ track.created_at|date:"M j, Y H:i" }}</dd>
+
+        {% if track.previous_path %}
+        <dt>Was at</dt>
+        <dd class="font-monospace text-break text-body-secondary">{{ track.previous_path }}</dd>
+        {% endif %}
+    </dl>
+
+    {# ---- where it came from, and whether it comes back ---- #}
+    {% if video %}
+    <div class="alert alert-warning py-2 px-3 small mb-3">
+        <div class="fw-semibold mb-1">
+            <i class="bi bi-youtube"></i> This track came from your playlist
+        </div>
+        <p class="mb-2">
+            Deleting it here removes the file and the download record — so the
+            <strong>next playlist sync will download it again</strong>. To stop that,
+            remove the video from the playlist as well.
+        </p>
+        <div class="d-flex flex-wrap gap-2">
+            <a href="{{ remove_url }}" target="_blank" rel="noopener noreferrer"
+               class="btn btn-sm btn-outline-danger">
+                <i class="bi bi-box-arrow-up-right"></i> Open in playlist to remove
+            </a>
+            {% if playlist_url %}
+            <a href="{{ playlist_url }}" target="_blank" rel="noopener noreferrer"
+               class="btn btn-sm btn-outline-secondary">
+                <i class="bi bi-list-ul"></i> Open playlist
+            </a>
+            {% endif %}
+        </div>
+        <div class="mt-2 text-body-secondary font-monospace" style="font-size:.75rem;">
+            {{ video.video_id }}{% if video.availability %} · {{ video.availability }}{% endif %}
+        </div>
+    </div>
+    {% else %}
+    <div class="alert alert-danger py-2 px-3 small mb-3">
+        <div class="fw-semibold mb-1">
+            <i class="bi bi-exclamation-octagon"></i> There is no source for this file
+        </div>
+        This track was found by a disk scan, not downloaded. Nothing records where
+        it came from, so once the file is deleted <strong>it cannot be recovered</strong>.
+    </div>
+    {% endif %}
+
+    {# ---- what else moves ---- #}
+    <div class="small text-body-secondary mb-3">
+        <div class="fw-semibold text-body mb-1">Deleting will:</div>
+        <ul class="mb-0 ps-3">
+            <li>{% if file_exists %}Permanently delete the audio file{% else %}Remove the database row (the file is already gone){% endif %}</li>
+            <li>Delete this track's row and any planned move</li>
+            {% if video %}<li>Delete the YouTube download record for <span class="font-monospace">{{ video.video_id }}</span></li>{% endif %}
+            {% if pending_jobs %}<li>Cancel {{ pending_jobs|length }} queued job{{ pending_jobs|pluralize }} for this track</li>{% endif %}
+            <li>Remove the album and artist folder if this was the last file in them</li>
+            <li>Append a record to <span class="font-monospace text-break">{{ ledger }}</span></li>
+        </ul>
+    </div>
+
+    {# ---- the gate ---- #}
+    <form hx-post="{% url 'action_delete_track' track.id %}" hx-swap="none"
+          class="delete-confirm-form">
+        {% csrf_token %}
+        <label for="delete-confirm-input" class="form-label small mb-1">
+            Type <span class="fw-semibold font-monospace">{{ delete_phrase }}</span> to confirm
+        </label>
+        <div class="d-flex gap-2">
+            <input type="text" class="form-control form-control-sm font-monospace"
+                   id="delete-confirm-input" name="confirm" autocomplete="off"
+                   autocapitalize="characters" spellcheck="false"
+                   data-delete-phrase="{{ delete_phrase }}"
+                   placeholder="{{ delete_phrase }}">
+            <button type="submit" class="btn btn-sm btn-danger flex-shrink-0"
+                    data-delete-submit disabled data-close-delete>
+                <i class="bi bi-trash3"></i> Delete
+            </button>
+        </div>
+    </form>
+</div>

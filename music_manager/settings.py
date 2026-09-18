@@ -256,6 +256,19 @@ DEEZER_ENABLED = env_bool("DEEZER_ENABLED", default=True)
 #: it — this is set to be a polite neighbour, not to go fast.
 DEEZER_RATE_PER_MIN = env_float("DEEZER_RATE_PER_MIN", default=30.0, minimum=0.1)
 
+#: Literal strings removed from any album title arriving from outside, stripped
+#: in `TrackMetadata.__post_init__` so nothing downstream sees them. Matched as
+#: written — no pattern is built around them. Longest is removed first.
+ALBUM_SUFFIX_NOISE = env_list(
+    "ALBUM_SUFFIX_NOISE",
+    default=[
+        "(Original Motion Picture Soundtrack)",
+        "(Original Soundtrack Album)",
+        "(Original Series Soundtrack)",
+        "Original Motion Picture Soundtrack",
+    ],
+)
+
 #: A provider result below this confidence is discarded and the chain continues.
 IDENTIFY_MIN_CONFIDENCE = env_float(
     "IDENTIFY_MIN_CONFIDENCE", default=0.5, minimum=0.0, maximum=1.0

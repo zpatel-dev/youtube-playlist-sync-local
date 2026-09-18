@@ -44,41 +44,6 @@ class TrackNaming:
     fallback_stem: str = ""
 
 
-#: The one trailing parenthetical that names the *kind* of release rather than
-#: distinguishing one recording from another. Removed so both spellings of an
-#: album become one string.
-#:
-#: Deliberately the narrowest rule that fixes the observed problem. Wider
-#: versions were tried and rejected: a bare `(Score)` matches *The Score*, and
-#: `(Soundtrack)`, `(OST)` and `(Original Score)` buy nothing here — every one
-#: of the 11 albums this library had split into 25 folders was split by this
-#: exact string. Anything that only *narrows* which recording is meant —
-#: `(Jhankar Beats)`, `(Slowed + Reverb)`, `(Remix)`, `(Live)` — must never
-#: match, because those are different recordings with different running times.
-#:
-#: Widen this only against a measured collision, one phrase at a time.
-_RELEASE_KIND = re.compile(
-    r"\s*[\(\[]\s*original\s+motion\s+picture\s+soundtrack\s*[\)\]]\s*$",
-    re.IGNORECASE,
-)
-
-
-def normalize_album(album: str) -> str:
-    """An album title with the release-kind suffix removed.
-
-    `Rang De Basanti (Original Motion Picture Soundtrack)` and
-    `Rang De Basanti` are one album; Plex groups on the string, so they have to
-    become one string.
-    """
-    cleaned = (album or "").strip()
-    if not cleaned:
-        return ""
-    stripped = _RELEASE_KIND.sub("", cleaned).strip()
-    # Never normalise a title out of existence: a title that is nothing but the
-    # suffix is still all the name there is.
-    return stripped or cleaned
-
-
 #: Only a comma starts a list of performers. Deliberately not `&` or a dash:
 #: `Salim-Sulaiman`, `Shankar-Ehsaan-Loy`, `Asha Bhosle & Adnan Sami` and
 #: `Mohd. Rafi & Suman Kalyanpur` are all one credit, and truncating any of
@@ -180,8 +145,10 @@ def resolve_album_artist(naming: TrackNaming) -> str:
 
 
 def resolve_album(naming: TrackNaming) -> str:
+    # Already stripped of ALBUM_SUFFIX_NOISE at the boundary; see
+    # `identify.base.strip_album_noise`.
     if naming.album and naming.album.strip():
-        return normalize_album(naming.album)
+        return naming.album.strip()
     return SINGLES_ALBUM if (naming.title or naming.fallback_stem) else UNKNOWN_ALBUM
 
 

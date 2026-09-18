@@ -51,6 +51,16 @@ urlpatterns = [
         name="action_apply_suggestion",
     ),
     path(
+        "fragments/track/<int:pk>/delete/",
+        views.fragment_delete_track,
+        name="fragment_delete_track",
+    ),
+    path(
+        "actions/track/<int:pk>/delete/",
+        views.action_delete_track,
+        name="action_delete_track",
+    ),
+    path(
         "actions/track/<int:pk>/identify/",
         views.action_identify_track,
         name="action_identify_track",

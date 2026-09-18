@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 
+from music.core import events
 from music.models import Track, TrackState
 from music.jobs import engine
 from music.jobs.registry import job
@@ -89,3 +90,43 @@ def rehash(job_obj) -> str:
     if remaining:
         engine.enqueue("library.rehash", {"limit": limit}, dedup_key="library.rehash")
     return f"hashed {hashed} file(s); {remaining} still to do"
+
+
+@job("library.delete_track", max_attempts=1,
+     description="Delete one track: its file, its row, and anything pointing at it")
+def delete_track(job_obj) -> str:
+    """Carry out a deletion a person confirmed in the UI.
+
+    `max_attempts=1` on purpose. Every other handler is safe to retry; this one
+    destroys a file, so a transient failure must surface rather than be tried
+    again against a half-removed track.
+    """
+    from music.core.locks import track_locks
+    from music.library import remover
+
+    track_id = job_obj.payload.get("track_id")
+    if not track_id:
+        return "no track_id in payload"
+
+    with track_locks.acquire(f"track:{track_id}") as acquired:
+        if not acquired:  # pragma: no cover - only reachable with a timeout
+            return "track busy"
+        track = Track.objects.filter(pk=track_id).first()
+        if track is None:
+            return f"track {track_id} no longer exists"
+
+        removal = remover.remove_track(track)
+
+    events.bump("tracks")
+    parts = [f"deleted {removal.label}"]
+    if removal.file_existed:
+        parts.append(f"{removal.size_bytes / 1048576:.1f}MB freed")
+    else:
+        parts.append("the file was already gone")
+    if removal.jobs_cancelled:
+        parts.append(f"{removal.jobs_cancelled} job(s) cancelled")
+    if removal.folders_removed:
+        parts.append(f"{len(removal.folders_removed)} empty folder(s) removed")
+    if removal.youtube_url:
+        parts.append("still in the playlist — remove it there or it returns")
+    return "; ".join(parts)

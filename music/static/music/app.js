@@ -284,6 +284,7 @@
 
     function openSuggestions(trackId) {
         if (!suggestions || !trackId) { return; }
+        closeDelete();
         // Fetch once. The fragment that comes back carries its own refresh
         // trigger while the search is running and drops it once there are
         // results — setting hx-trigger from here is what stranded the spinner
@@ -307,6 +308,67 @@
     document.addEventListener('keydown', function (event) {
         if (event.key === 'Escape' && suggestions && !suggestions.hidden) {
             closeSuggestions();
+        }
+    });
+
+    // ------------------------------------------------------- delete panel
+    //
+    // A separate panel from the suggestions one, and deliberately not
+    // hx-confirm: a browser confirm() cannot show the artwork, the size, the
+    // YouTube link or a typed gate, and Enter dismisses it by reflex.
+    //
+    // This panel does NOT refetch on sse:update. The suggestions panel does,
+    // and doing the same here would wipe a half-typed confirmation.
+
+    var deletePanel = document.getElementById('delete-panel');
+
+    function closeDelete() {
+        if (!deletePanel) { return; }
+        deletePanel.hidden = true;
+        // replaceChildren, not innerHTML — see closeSuggestions (A11).
+        deletePanel.replaceChildren();
+    }
+
+    function openDelete(trackId) {
+        if (!deletePanel || !trackId) { return; }
+        // One dialog at a time: both use the same overlay, and two open at
+        // once stack on top of each other with two role="dialog" regions.
+        closeSuggestions();
+        deletePanel.hidden = false;
+        window.htmx.ajax('GET', '/fragments/track/' + trackId + '/delete/',
+                         {target: deletePanel, swap: 'innerHTML'});
+    }
+
+    document.addEventListener('click', function (event) {
+        var trigger = event.target.closest('.js-delete');
+        if (!trigger) { return; }
+        event.preventDefault();
+        openDelete(trigger.getAttribute('data-track-id'));
+    });
+
+    if (deletePanel) {
+        deletePanel.addEventListener('click', function (event) {
+            if (event.target.closest('[data-close-delete]')) {
+                // A Delete submit posts through htmx first; closing here only
+                // hides a panel whose request has already left.
+                setTimeout(closeDelete, 0);
+            }
+        });
+
+        // The gate: the button stays disabled until the phrase matches exactly.
+        // The server checks it again — this only spares a pointless round trip.
+        deletePanel.addEventListener('input', function (event) {
+            var field = event.target.closest('[data-delete-phrase]');
+            if (!field) { return; }
+            var submit = deletePanel.querySelector('[data-delete-submit]');
+            if (!submit) { return; }
+            submit.disabled = field.value.trim() !== field.getAttribute('data-delete-phrase');
+        });
+    }
+
+    document.addEventListener('keydown', function (event) {
+        if (event.key === 'Escape' && deletePanel && !deletePanel.hidden) {
+            closeDelete();
         }
     });
 })();

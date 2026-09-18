@@ -15,6 +15,7 @@ Nothing here touches the network, the job queue or the real library.
 
 from __future__ import annotations
 
+import json
 import struct
 import tempfile
 from pathlib import Path
@@ -24,8 +25,17 @@ from django.test import TestCase, override_settings
 
 from music.core.locks import track_locks
 from music.identify.base import TrackMetadata
-from music.library import organizer, scanner, tagio
-from music.models import ScanRoot, Source, Track, TrackState
+from music.jobs import engine
+from music.library import organizer, remover, scanner, tagio
+from music.models import (
+    Job,
+    JobState,
+    ScanRoot,
+    Source,
+    Track,
+    TrackState,
+    YoutubeVideo,
+)
 
 #: One MPEG-1 Layer III frame header (128 kbps, 44.1 kHz, no padding) plus its
 #: 413 bytes of payload. Repeated, this is a file mutagen accepts as an MP3.
@@ -895,3 +905,233 @@ class ContentHashTests(LibraryTestCase):
         with mock.patch.object(organizer, "hash_file") as hasher:
             self.assertEqual(organizer.ensure_content_hash(track), digest)
         hasher.assert_not_called()
+
+
+class RemoveTrackTests(TestCase):
+    """The one place in the app that deletes a library file."""
+
+    def setUp(self):
+        # The ledger lives in BASE_DIR; without this the suite appends to the
+        # real one in the repo every run.
+        import tempfile
+
+        base = Path(tempfile.mkdtemp())
+        self.addCleanup(lambda: __import__("shutil").rmtree(base, ignore_errors=True))
+        # Siblings, as they are in a real install: the ledger must not land
+        # inside the library, where a scan would pick it up.
+        self.root = base / "library"
+        self.app = base / "app"
+        self.app.mkdir(parents=True)
+        self.audio = self.root / "Artist" / "Album" / "01 - Song.mp3"
+        self.audio.parent.mkdir(parents=True)
+        self.audio.write_bytes(b"x" * 2048)
+        self.settings_patch = override_settings(
+            LIBRARY_ROOT=str(self.root), BASE_DIR=self.app
+        )
+        self.settings_patch.enable()
+        self.addCleanup(self.settings_patch.disable)
+        self.track = Track.objects.create(
+            path=str(self.audio),
+            title="Song",
+            artist="Artist",
+            album="Album",
+            duration=200,
+            state=TrackState.ORGANIZED,
+        )
+
+    def test_the_file_and_the_row_both_go(self):
+        remover.remove_track(self.track)
+        self.assertFalse(self.audio.exists())
+        self.assertFalse(Track.objects.filter(pk=self.track.pk).exists())
+
+    def test_the_file_must_go_too_or_the_next_scan_brings_it_back(self):
+        # The row alone is not enough: every scan root is walked on a timer.
+        remover.remove_track(self.track)
+        self.assertFalse(self.audio.exists())
+
+    def test_the_youtube_record_goes_with_it(self):
+        YoutubeVideo.objects.create(
+            video_id="abc123", url="https://youtu.be/abc123", track=self.track
+        )
+        removal = remover.remove_track(self.track)
+        self.assertFalse(YoutubeVideo.objects.filter(video_id="abc123").exists())
+        self.assertEqual(removal.youtube_url, "https://youtu.be/abc123")
+        self.assertTrue(removal.recoverable)
+
+    def test_a_scanned_track_reports_itself_unrecoverable(self):
+        self.assertFalse(remover.remove_track(self.track).recoverable)
+
+    def test_queued_jobs_for_the_track_are_cancelled(self):
+        engine.enqueue("identify.track", {"track_id": self.track.pk})
+        removal = remover.remove_track(self.track)
+        self.assertEqual(removal.jobs_cancelled, 1)
+        self.assertEqual(
+            Job.objects.filter(kind="identify.track").first().state,
+            JobState.CANCELLED,
+        )
+
+    def test_a_job_for_a_different_track_is_left_alone(self):
+        engine.enqueue("identify.track", {"track_id": self.track.pk + 999})
+        removal = remover.remove_track(self.track)
+        self.assertEqual(removal.jobs_cancelled, 0)
+
+    def test_the_ledger_records_what_was_destroyed(self):
+        remover.remove_track(self.track)
+        entries = [
+            json.loads(line)
+            for line in remover.ledger_path().read_text(encoding="utf-8").splitlines()
+            if line.strip()
+        ]
+        self.assertEqual(len(entries), 1)
+        self.assertEqual(entries[0]["title"], "Song")
+        self.assertEqual(entries[0]["path"], str(self.audio))
+        self.assertEqual(entries[0]["size_bytes"], 2048)
+
+    def test_the_ledger_is_not_written_inside_the_library(self):
+        # Inside it, a scan would pick the ledger up as a file to manage.
+        ledger = remover.ledger_path().resolve()
+        self.assertFalse(str(ledger).startswith(str(self.root.resolve())))
+
+    def test_the_emptied_album_and_artist_folders_are_removed(self):
+        removal = remover.remove_track(self.track)
+        self.assertFalse(self.audio.parent.exists())
+        self.assertFalse(self.audio.parent.parent.exists())
+        self.assertEqual(len(removal.folders_removed), 2)
+
+    def test_a_folder_holding_other_tracks_survives(self):
+        sibling = self.audio.parent / "02 - Other.mp3"
+        sibling.write_bytes(b"y")
+        remover.remove_track(self.track)
+        self.assertTrue(sibling.exists())
+        self.assertTrue(self.audio.parent.exists())
+
+    def test_the_library_root_itself_is_never_removed(self):
+        flat = self.root / "loose.mp3"
+        flat.write_bytes(b"z")
+        track = Track.objects.create(path=str(flat), title="Loose", artist="A")
+        remover.remove_track(track)
+        self.assertTrue(self.root.exists())
+
+    def test_a_missing_file_still_removes_the_row(self):
+        self.audio.unlink()
+        removal = remover.remove_track(self.track)
+        self.assertFalse(removal.file_existed)
+        self.assertFalse(Track.objects.filter(pk=self.track.pk).exists())
+
+    def test_the_removal_reports_the_size_that_was_freed(self):
+        self.assertEqual(remover.remove_track(self.track).size_bytes, 2048)
+
+
+class DeleteTrackJobTests(TestCase):
+    """The handler wrapper: locking, and a message worth reading."""
+
+    def setUp(self):
+        import tempfile
+
+        base = Path(tempfile.mkdtemp())
+        self.addCleanup(lambda: __import__("shutil").rmtree(base, ignore_errors=True))
+        self.root = base / "library"
+        self.root.mkdir(parents=True)
+        (base / "app").mkdir()
+        audio = self.root / "song.mp3"
+        audio.write_bytes(b"x" * 1024)
+        patch = override_settings(
+            LIBRARY_ROOT=str(self.root), BASE_DIR=base / "app"
+        )
+        patch.enable()
+        self.addCleanup(patch.disable)
+        self.track = Track.objects.create(path=str(audio), title="Song", artist="A")
+
+    def _run(self, payload):
+        from music.jobs.handlers import library as handlers
+
+        job = engine.enqueue("library.delete_track", payload)
+        return handlers.delete_track(job)
+
+    def test_it_deletes_and_says_what_it_did(self):
+        message = self._run({"track_id": self.track.pk})
+        self.assertIn("deleted A - Song", message)
+        self.assertIn("MB freed", message)
+        self.assertFalse(Track.objects.filter(pk=self.track.pk).exists())
+
+    def test_a_youtube_track_warns_that_it_will_return(self):
+        YoutubeVideo.objects.create(
+            video_id="abc", url="https://youtu.be/abc", track=self.track
+        )
+        self.assertIn("remove it there or it returns", self._run({"track_id": self.track.pk}))
+
+    def test_a_vanished_track_is_not_an_error(self):
+        pk = self.track.pk
+        self.track.delete()
+        self.assertIn("no longer exists", self._run({"track_id": pk}))
+
+    def test_a_payload_with_no_track_is_not_an_error(self):
+        self.assertIn("no track_id", self._run({}))
+
+    def test_it_is_never_retried(self):
+        # Every other handler is safe to retry; this one destroys a file.
+        from music.jobs import registry
+
+        self.assertEqual(registry.get("library.delete_track").max_attempts, 1)
+
+
+class PlanCleansAlbumTests(TestCase):
+    """A row written before the boundary existed is healed when it is planned.
+
+    Without this the path and the tag disagree: `_write_tags` builds a
+    `TrackMetadata` and so strips the suffix, while `naming_from_track` builds a
+    `TrackNaming` and does not.
+    """
+
+    def setUp(self):
+        import tempfile
+
+        self.root = Path(tempfile.mkdtemp())
+        self.addCleanup(
+            lambda: __import__("shutil").rmtree(self.root, ignore_errors=True)
+        )
+        patch = override_settings(LIBRARY_ROOT=str(self.root))
+        patch.enable()
+        self.addCleanup(patch.disable)
+        audio = self.root / "incoming" / "song.mp3"
+        audio.parent.mkdir(parents=True)
+        audio.write_bytes(b"x")
+        self.track = Track.objects.create(
+            path=str(audio),
+            title="Khoon Chala",
+            artist="Mohit Chauhan",
+            album="Rang De Basanti (Original Motion Picture Soundtrack)",
+            album_artist="A.R. Rahman",
+            state=TrackState.IDENTIFIED,
+        )
+
+    def test_planning_strips_the_suffix_from_the_row(self):
+        organizer.plan_track(self.track)
+        self.track.refresh_from_db()
+        self.assertEqual(self.track.album, "Rang De Basanti")
+
+    def test_the_planned_folder_has_no_suffix(self):
+        organizer.plan_track(self.track)
+        self.track.refresh_from_db()
+        self.assertIn("Rang De Basanti", self.track.planned_path)
+        self.assertNotIn("Original Motion Picture Soundtrack", self.track.planned_path)
+
+    def test_the_folder_and_the_tag_agree(self):
+        organizer.plan_track(self.track)
+        self.track.refresh_from_db()
+        folder = Path(self.track.planned_path).parent.name
+        self.assertEqual(folder, _metadata_album(self.track))
+
+    def test_a_clean_row_is_not_rewritten(self):
+        self.track.album = "Rang De Basanti"
+        self.track.save(update_fields=["album"])
+        before = Track.objects.get(pk=self.track.pk).updated_at
+        organizer.plan_track(self.track)
+        self.assertEqual(Track.objects.get(pk=self.track.pk).album, "Rang De Basanti")
+        self.assertGreaterEqual(Track.objects.get(pk=self.track.pk).updated_at, before)
+
+
+def _metadata_album(track) -> str:
+    from music.library.organizer import _metadata_from
+
+    return _metadata_from(track).album

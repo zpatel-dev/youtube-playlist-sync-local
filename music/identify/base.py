@@ -10,6 +10,7 @@ from __future__ import annotations
 import abc
 import dataclasses
 import logging
+import re
 import threading
 from dataclasses import dataclass, field, replace
 from importlib import import_module
@@ -24,11 +25,51 @@ from . import matching
 log = logging.getLogger("music.identify")
 
 
+#: Tidy-up after a phrase is cut out. Applied only when something was actually
+#: removed, so a title legitimately ending in "-" is never touched.
+_RUNS_OF_SPACE = re.compile(r"\s+")
+#: "Queen []" — the phrase was inside brackets the list does not include.
+_EMPTY_BRACKETS = re.compile(r"\s*[(\[]\s*[)\]]")
+#: "Moneyball:" and "Queen (" — a separator or opening bracket left hanging.
+_DANGLING_EDGES = re.compile(r"^[\s\-:,]+|[\s\-:,(\[]+$")
+
+
+def strip_album_noise(album: str) -> str:
+    """Remove `settings.ALBUM_SUFFIX_NOISE` from an album title, literally."""
+    # str(): this runs on every TrackMetadata, including ones built straight
+    # from someone else's JSON, and a number there must not raise.
+    original = "" if album is None else str(album).strip()
+    if not original:
+        return ""
+
+    cleaned, removed = original, False
+    # Longest first, or the bare phrase would match inside the bracketed one.
+    for phrase in sorted(settings.ALBUM_SUFFIX_NOISE, key=len, reverse=True):
+        phrase = phrase.strip()
+        if not phrase:
+            continue
+        at = cleaned.lower().find(phrase.lower())
+        if at != -1:
+            cleaned = cleaned[:at] + cleaned[at + len(phrase) :]
+            removed = True
+
+    if not removed:
+        return original
+
+    cleaned = _EMPTY_BRACKETS.sub("", cleaned)
+    cleaned = _RUNS_OF_SPACE.sub(" ", cleaned)
+    cleaned = _DANGLING_EDGES.sub("", cleaned)
+    return cleaned or original
+
+
 @dataclass(frozen=True)
 class TrackMetadata:
     """What a provider returns. Frozen; derive with `replace()`/`merged_with()`.
 
     Unknown numbers are 0, never None — see `music.models.Track`.
+
+    The album title is stripped of `ALBUM_SUFFIX_NOISE` on construction — the
+    one boundary every outside answer crosses, so the one place it is done.
     """
 
     title: str = ""
@@ -55,6 +96,13 @@ class TrackMetadata:
     #: 0.0–1.0, compared against settings.IDENTIFY_MIN_CONFIDENCE.
     confidence: float = 0.0
     provider: str = ""
+
+    def __post_init__(self) -> None:
+        cleaned = strip_album_noise(self.album)
+        if cleaned != self.album:
+            # Frozen, so this is the one sanctioned mutation; it runs before
+            # anyone can observe the instance.
+            object.__setattr__(self, "album", cleaned)
 
     def is_usable(self) -> bool:
         """Enough to place and name the file. Mirrors `Track.has_core_metadata`."""

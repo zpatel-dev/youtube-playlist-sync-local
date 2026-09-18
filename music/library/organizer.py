@@ -26,7 +26,7 @@ from music import plex
 from music.core import artwork, events
 from music.core.fileio import hash_file, is_within, move_file, prune_empty_dirs, unique_path
 from music.core.locks import track_locks
-from music.identify.base import TrackMetadata
+from music.identify.base import TrackMetadata, strip_album_noise
 from music.library import tagio
 from music.models import Track, TrackState
 
@@ -63,12 +63,27 @@ class OrganizeError(RuntimeError):
 # --- Planning ----------------------------------------------------------
 
 
+def _clean_album(track: Track) -> None:
+    """Strip ALBUM_SUFFIX_NOISE from a row written before that existed.
+
+    New answers arrive clean from `TrackMetadata`, but an older row still
+    carries the suffix — and `_write_tags` strips it while the path does not,
+    so the folder and the embedded tag would disagree. Doing it here keeps the
+    row, the folder and the tag in step, and heals on the next plan.
+    """
+    cleaned = strip_album_noise(track.album)
+    if cleaned != track.album:
+        track.album = cleaned
+        track.save(update_fields=["album", "updated_at"])
+
+
 def plan_track(track: Track) -> str:
     """Compute where this track belongs, store it, and return a human note.
 
     The note is what the dashboard shows in the manifest before applying.
     """
     library_root = Path(settings.LIBRARY_ROOT)
+    _clean_album(track)
     naming = plex.naming_from_track(track)
 
     if not track.has_core_metadata:

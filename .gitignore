@@ -39,3 +39,6 @@ staging/
 # Contents are ignored; scripts/devdata.py recreates the structure and sample
 # files on demand, so nothing here needs to be in version control.
 _devdata/
+
+# Ledger of tracks deleted from the library (runtime data, per install).
+deleted-tracks.jsonl

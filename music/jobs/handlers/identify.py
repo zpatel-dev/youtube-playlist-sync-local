@@ -127,15 +127,13 @@ def identify_track(job_obj) -> str:
 def _apply_metadata(track: Track, meta) -> None:
     """Copy provider output onto the Track without clobbering better local data.
 
-    Album and album artist are normalised here rather than only in `plex`,
-    because the folder is not what Plex groups on — the embedded tag is, and
-    `library.tagio` writes these fields straight out. Normalising only the path
-    would move two spellings of one album into a single folder and leave Plex
-    still showing two albums inside it.
+    The album arrives already stripped of `ALBUM_SUFFIX_NOISE` — that happens
+    in `TrackMetadata`. The album artist is reduced here because it comes from
+    the row as often as from the provider.
     """
     track.title = meta.title or track.title
     track.artist = meta.artist or track.artist
-    track.album = plex.normalize_album(meta.album or track.album)
+    track.album = meta.album or track.album
     album_artist = meta.album_artist or track.album_artist
     # A provider that names only a per-track line-up ("A.R. Rahman, Shreya
     # Ghoshal & Uday Mazumdar") would otherwise become its own album artist.

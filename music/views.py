@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import time
 from dataclasses import dataclass
 from datetime import timedelta
@@ -167,9 +168,12 @@ TRACK_SINCE_CHOICES: dict[str, tuple[str, timedelta]] = {
     "30d": ("Last 30 days", timedelta(days=30)),
 }
 
-#: Not `settings.IDENTIFY_CHAIN`: a track keeps the provider that named it even
-#: after that provider leaves the chain, and filtering it out would hide rows.
-IDENTIFY_PROVIDERS = ("acoustid", "shazam", "gemini", "tags")
+#: Every provider that has ever stamped a row — not `settings.IDENTIFY_CHAIN`,
+#: because a track keeps the provider that named it after that provider leaves
+#: the chain, and filtering it out would hide rows. Add a new provider here as
+#: well as to the chain: a name missing from this list is rejected by `?by=`
+#: and never offered in the dropdown, so its rows become unfilterable.
+IDENTIFY_PROVIDERS = ("acoustid", "shazam", "itunes", "deezer", "gemini", "tags")
 
 
 def _filter_state(queryset, state: str):
@@ -1376,3 +1380,97 @@ def action_apply_suggestion(request, pk: int, index: int):
     if chosen.album:
         label += f" [{chosen.album}]"
     return _notify(label, "info")
+
+
+# --------------------------------------------------------------------------
+# Deleting a track
+# --------------------------------------------------------------------------
+#
+# Deletion is the only irreversible action in the app, so it does not go
+# through `hx-confirm`. That is a browser `confirm()`: plain text, no artwork,
+# no clickable link, and nothing stopping a reflexive Enter. What a person
+# needs before destroying a file is the whole picture — what it is, where it
+# lives, what it cost to get, and whether it can ever be fetched again — so
+# this is a panel that has to be read, with a word to type at the bottom.
+
+#: What the confirmation asks the person to type. Deliberately not "yes": it
+#: has to be a word nobody produces by reflex.
+DELETE_PHRASE = "DELETE"
+
+
+def _playlist_id(url: str) -> str:
+    """The `list=` id out of the configured playlist URL, or ""."""
+    match = re.search(r"[?&]list=([A-Za-z0-9_-]+)", url or "")
+    return match.group(1) if match else ""
+
+
+def fragment_delete_track(request, pk: int):
+    """Everything a person should see before deleting this track."""
+    from music.library import remover
+
+    track = get_object_or_404(Track, pk=pk)
+    video = getattr(track, "youtube_video", None)
+
+    path = Path(track.path)
+    try:
+        size_bytes = path.stat().st_size if path.exists() else 0
+    except OSError:
+        size_bytes = 0
+
+    pending = [
+        job
+        for job in Job.objects.filter(state__in=JobState.active()).only("id", "kind", "payload")
+        if (job.payload or {}).get("track_id") == track.pk
+    ]
+
+    # Opens the video inside the playlist, which is where the Remove control
+    # lives. Without a configured playlist this is just the watch URL.
+    playlist_id = _playlist_id(settings.PLAYLIST_URL)
+    remove_url = ""
+    if video is not None:
+        remove_url = video.url or ""
+        if playlist_id:
+            remove_url = (
+                f"https://www.youtube.com/watch?v={video.video_id}&list={playlist_id}"
+            )
+
+    return render(
+        request,
+        "music/_delete_confirm.html",
+        {
+            "track": track,
+            "video": video,
+            "size_bytes": size_bytes,
+            "file_exists": path.exists(),
+            "pending_jobs": pending,
+            "remove_url": remove_url,
+            "playlist_url": settings.PLAYLIST_URL,
+            "delete_phrase": DELETE_PHRASE,
+            "ledger": str(remover.ledger_path()),
+        },
+    )
+
+
+@require_POST
+def action_delete_track(request, pk: int):
+    """Delete a track, once the typed phrase matches.
+
+    The phrase is checked server-side as well as in the browser: the button is
+    disabled until it matches, but a disabled button is a suggestion, not a
+    guarantee.
+    """
+    track = _track_or_404(pk)
+
+    typed = (request.POST.get("confirm") or "").strip()
+    if typed != DELETE_PHRASE:
+        return _notify(
+            f'Type {DELETE_PHRASE} to confirm — nothing was deleted.', "warning"
+        )
+
+    return _queued(
+        "library.delete_track",
+        f"Deleting: {track['label']}",
+        {"track_id": track["id"]},
+        dedup_key=f"library.delete_track:{track['id']}",
+        priority=4,
+    )

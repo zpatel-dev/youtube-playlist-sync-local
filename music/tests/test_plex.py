@@ -528,81 +528,6 @@ class IsAlreadyOrganizedTests(SimpleTestCase):
                 )
 
 
-class AlbumNormalizationTests(SimpleTestCase):
-    """Folding the spellings of one album into one string.
-
-    Every case here comes from the live library, where 11 albums had been split
-    into 25 folders by nothing but a suffix.
-    """
-
-    def test_the_soundtrack_suffix_is_removed(self):
-        self.assertEqual(
-            plex.normalize_album("Rang De Basanti (Original Motion Picture Soundtrack)"),
-            "Rang De Basanti",
-        )
-
-    def test_the_bracketed_and_odd_spaced_forms_are_removed(self):
-        for written in (
-            "Guru [Original Motion Picture Soundtrack]",
-            "Guru  (Original  Motion  Picture  Soundtrack)  ",
-            "Guru (ORIGINAL MOTION PICTURE SOUNDTRACK)",
-        ):
-            with self.subTest(written=written):
-                self.assertEqual(plex.normalize_album(written), "Guru")
-
-    def test_only_that_one_phrase_is_removed(self):
-        # Deliberately narrow: widen only against a measured collision. Each of
-        # these was in an earlier, looser version of the rule and is now kept.
-        for kept in (
-            "Guru (Soundtrack)",
-            "Guru (OST)",
-            "Guru (Original Score)",
-            "Guru (Motion Picture Soundtrack)",
-            "Guru (Original Soundtrack)",
-            "JUST A BOY - Single",
-            "Ghoomer - EP",
-        ):
-            with self.subTest(kept=kept):
-                self.assertEqual(plex.normalize_album(kept), kept)
-
-    def test_the_suffix_is_only_removed_from_the_end(self):
-        title = "Original Motion Picture Soundtrack Collection"
-        self.assertEqual(plex.normalize_album(title), title)
-
-    def test_a_suffix_that_names_the_recording_is_kept(self):
-        # These are different recordings with different running times, and
-        # `textsearch` works hard to tell them apart. Folding them would undo
-        # that.
-        for kept in (
-            "Zara Zara (Jhankar Beats)",
-            "Lagyo Re Prityu No Rang (Slowed + Reverb)",
-            "Aashiqui Mein Teri (Akbar Sami Remix)",
-            "Hookah Bar (Remix)",
-            # "Score" unqualified is a real album name (The Fugees' The Score),
-            # so only "Original Score" / "Motion Picture Score" count.
-            "The Score",
-            "Bandit (Score)",
-            "Pushpa (Deluxe Edition)",
-            "Rockstar (Live)",
-        ):
-            with self.subTest(kept=kept):
-                self.assertEqual(plex.normalize_album(kept), kept)
-
-    def test_a_title_that_is_only_the_suffix_survives(self):
-        # Normalising this to "" would file the track under Unknown Album.
-        only = "(Original Motion Picture Soundtrack)"
-        self.assertEqual(plex.normalize_album(only), only)
-
-    def test_nothing_in_means_nothing_out(self):
-        self.assertEqual(plex.normalize_album(""), "")
-        self.assertEqual(plex.normalize_album("   "), "")
-
-    def test_the_two_rang_de_basanti_spellings_become_one(self):
-        a = plex.normalize_album("Rang De Basanti")
-        b = plex.normalize_album("Rang De Basanti (Original Motion Picture Soundtrack)")
-        self.assertEqual(a, b)
-
-
 class PrincipalArtistTests(SimpleTestCase):
     """Taking the album's artist out of a per-track performer list."""
 
@@ -641,7 +566,8 @@ class NamingPolicyIntegrationTests(SimpleTestCase):
         naming = plex.TrackNaming(
             title="Tu Bin Bataye",
             artist="A.R. Rahman, Madhushree & Naresh Iyer",
-            album="Rang De Basanti (Original Motion Picture Soundtrack)",
+            # Arrives already stripped; TrackMetadata does that at the boundary.
+            album="Rang De Basanti",
             track_no=4,
         )
         self.assertEqual(
@@ -671,15 +597,16 @@ class NamingPolicyIntegrationTests(SimpleTestCase):
         self.assertEqual(plex.resolve_album_artist(naming), plex.VARIOUS_ARTISTS)
 
     def test_the_four_rang_de_basanti_albums_land_in_one_place(self):
-        # The real tags from the Pi, minus the MusicBrainz ids.
+        # The real tags from the Pi, as they reach `plex` — i.e. after the
+        # boundary has stripped ALBUM_SUFFIX_NOISE.
         tracks = [
             ("Khoon Chala", "Mohit Chauhan", "Rang De Basanti", "A.R. Rahman", 6),
             ("Luka Chuppi", "Lata Mangeshkar & A. R. Rahman", "Rang De Basanti",
              "A.R. Rahman", 8),
             ("Rang De Basanti", "A.R. Rahman, Daler Mehndi & K.S. Chithra",
-             "Rang De Basanti (Original Motion Picture Soundtrack)", "A.R. Rahman", 2),
+             "Rang De Basanti", "A.R. Rahman", 2),
             ("Tu Bin Bataye", "A.R. Rahman, Madhushree & Naresh Iyer",
-             "Rang De Basanti (Original Motion Picture Soundtrack)", "A.R. Rahman", 4),
+             "Rang De Basanti", "A.R. Rahman", 4),
         ]
         folders = {
             plex.build_relative_path(

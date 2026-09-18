@@ -1803,15 +1803,17 @@ class CatalogueConcurrencyTests(SimpleTestCase):
         slow = self._catalogue("itunes", [], delay=0.30)
         also_slow = self._catalogue("deezer", [], delay=0.30)
 
-        start = time.monotonic()
         suggest._from_catalogues(
             {"itunes": slow, "deezer": also_slow}, make_context(), []
         )
-        elapsed = time.monotonic() - start
 
-        # Sequentially this is 0.60s. Generous ceiling so a loaded CI box does
-        # not fail it, but far below the sequential cost.
-        self.assertLess(elapsed, 0.50)
+        # Assert the property, not a stopwatch: the two calls must have been in
+        # flight at the same time. A wall-clock ceiling looks equivalent but
+        # fails on a loaded machine for reasons that have nothing to do with
+        # concurrency — this one measured 2.3s during an unrelated background
+        # job and reported a bug that was not there.
+        self.assertLess(slow.started, also_slow.finished)
+        self.assertLess(also_slow.started, slow.finished)
 
     def test_the_order_shown_does_not_depend_on_which_finished_first(self):
         # Deezer returns immediately, iTunes dawdles. iTunes must still lead,
@@ -1884,3 +1886,304 @@ class CatalogueConcurrencyTests(SimpleTestCase):
         )
         after = {t.name for t in threading.enumerate()}
         self.assertEqual({n for n in after - before if n.startswith("suggest")}, set())
+
+
+class AlbumNoiseEdgeCaseTests(SimpleTestCase):
+    """`strip_album_noise` is string surgery on values from strangers.
+
+    Grouped by the thing that can go wrong, because every one of these is a way
+    a title could come back mangled and then be written to a tag, a filename
+    and a folder name before anyone noticed.
+    """
+
+    #: The four configured literals, pinned here so a config change that breaks
+    #: these cases fails loudly rather than quietly changing the library.
+    PHRASES = [
+        "(Original Motion Picture Soundtrack)",
+        "(Original Soundtrack Album)",
+        "(Original Series Soundtrack)",
+        "Original Motion Picture Soundtrack",
+    ]
+
+    def setUp(self):
+        patch = override_settings(ALBUM_SUFFIX_NOISE=self.PHRASES)
+        patch.enable()
+        self.addCleanup(patch.disable)
+
+    def assertStrips(self, album, expected):
+        self.assertEqual(base.strip_album_noise(album), expected)
+
+    def assertKept(self, album):
+        self.assertEqual(base.strip_album_noise(album), album.strip())
+
+    # -- the plain cases --
+
+    def test_each_configured_phrase(self):
+        for album, expected in (
+            ("Wake Up Sid (Original Motion Picture Soundtrack)", "Wake Up Sid"),
+            ("The Bodyguard (Original Soundtrack Album)", "The Bodyguard"),
+            ("Dr. Arora (Original Series Soundtrack)", "Dr. Arora"),
+            ("Moneyball: Original Motion Picture Soundtrack", "Moneyball"),
+        ):
+            with self.subTest(album=album):
+                self.assertStrips(album, expected)
+
+    # -- whitespace --
+
+    def test_trailing_space_after_the_bracket(self):
+        self.assertStrips("Udta Punjab (Original Motion Picture Soundtrack) ", "Udta Punjab")
+
+    def test_leading_and_trailing_whitespace_on_the_input(self):
+        self.assertStrips("  Queen (Original Motion Picture Soundtrack)  ", "Queen")
+
+    def test_removal_from_the_middle_does_not_leave_a_double_space(self):
+        self.assertStrips(
+            "Masaan (Original Motion Picture Soundtrack) - Single", "Masaan - Single"
+        )
+
+    def test_several_internal_spaces_collapse_to_one(self):
+        self.assertStrips(
+            "Masaan   (Original Motion Picture Soundtrack)   - EP", "Masaan - EP"
+        )
+
+    def test_a_tab_or_newline_is_treated_as_whitespace(self):
+        self.assertStrips(
+            "Masaan\t(Original Motion Picture Soundtrack)\n- EP", "Masaan - EP"
+        )
+
+    def test_extra_space_inside_the_brackets_still_cleans_up(self):
+        # "( Original ... )" is not one of the literals, but the *bare* phrase
+        # matches inside it and the empty pair that is left is then removed.
+        self.assertStrips("Queen ( Original Motion Picture Soundtrack )", "Queen")
+
+    # -- dangling punctuation --
+
+    def test_a_colon_left_behind_is_removed(self):
+        self.assertStrips("Moneyball: Original Motion Picture Soundtrack", "Moneyball")
+
+    def test_a_dash_left_behind_is_removed(self):
+        self.assertStrips("Moneyball - Original Motion Picture Soundtrack", "Moneyball")
+
+    def test_a_comma_left_behind_is_removed(self):
+        self.assertStrips("Moneyball, Original Motion Picture Soundtrack", "Moneyball")
+
+    def test_an_unclosed_bracket_does_not_survive(self):
+        # The bracketed form cannot match, so the bare one does and leaves "(".
+        self.assertStrips("Queen (Original Motion Picture Soundtrack", "Queen")
+
+    def test_a_square_bracket_pair_does_not_survive(self):
+        # "[...]" is not one of the literals, so the bare phrase matches inside
+        # it and would otherwise leave "Queen []".
+        self.assertStrips("Queen [Original Motion Picture Soundtrack]", "Queen")
+
+    def test_a_round_bracket_pair_left_empty_does_not_survive(self):
+        self.assertStrips("Queen (Original Motion Picture Soundtrack )", "Queen")
+
+    # -- ordering --
+
+    def test_the_bracketed_form_is_removed_before_the_bare_one(self):
+        result = base.strip_album_noise("Wake Up Sid (Original Motion Picture Soundtrack)")
+        self.assertNotIn("(", result)
+        self.assertNotIn(")", result)
+
+    def test_two_different_phrases_in_one_title(self):
+        self.assertStrips(
+            "Foo (Original Series Soundtrack) (Original Soundtrack Album)", "Foo"
+        )
+
+    def test_a_doubled_suffix_is_fully_removed(self):
+        # Each phrase is removed once, but the bracketed and bare forms are
+        # separate entries: the first takes one copy, the second takes the
+        # inside of the other, and the empty pair left behind goes too.
+        self.assertStrips(
+            "Foo (Original Motion Picture Soundtrack) "
+            "(Original Motion Picture Soundtrack)",
+            "Foo",
+        )
+
+    # -- case --
+
+    def test_matching_ignores_case(self):
+        for album in (
+            "Queen (ORIGINAL MOTION PICTURE SOUNDTRACK)",
+            "Queen (original motion picture soundtrack)",
+            "Queen (OrIgInAl MoTiOn PiCtUrE SoUnDtRaCk)",
+        ):
+            with self.subTest(album=album):
+                self.assertStrips(album, "Queen")
+
+    def test_the_rest_of_the_title_keeps_its_case(self):
+        self.assertStrips("WaKe Up SiD (Original Motion Picture Soundtrack)", "WaKe Up SiD")
+
+    # -- position --
+
+    def test_a_phrase_at_the_very_start_is_removed(self):
+        self.assertStrips("(Original Motion Picture Soundtrack) Queen", "Queen")
+
+    def test_a_phrase_in_the_middle_is_removed(self):
+        self.assertStrips(
+            "Queen (Original Motion Picture Soundtrack) Deluxe", "Queen Deluxe"
+        )
+
+    # -- things that must survive untouched --
+
+    def test_real_album_names_are_never_damaged(self):
+        for kept in (
+            "YTMND Soundtrack, Volume 10",
+            "Ghost Stories (instrumentals)",
+            "Future Nostalgia",
+            "Zara Zara (Jhankar Beats)",
+            "Merry Christmas: Original Score",
+            "Mismatched: Season 2 (Soundtrack from the Netflix Series)",
+            "Cubicles (A TVF Original Series Soundtrack)",
+            "The Score",
+            "Original Sin",
+            "Motion Picture Soundtrack",  # a Radiohead song title
+        ):
+            with self.subTest(kept=kept):
+                self.assertKept(kept)
+
+    def test_a_title_ending_in_punctuation_is_untouched_when_nothing_matched(self):
+        # The tidy-up must not run on a title no phrase was removed from.
+        for kept in ("Album -", "Album:", "Album,", "Untitled (", "Foo ()"):
+            with self.subTest(kept=kept):
+                self.assertKept(kept)
+
+    def test_a_title_that_is_only_the_phrase_survives(self):
+        # Stripping to "" would file the track under Unknown Album.
+        for only in (
+            "(Original Motion Picture Soundtrack)",
+            "Original Motion Picture Soundtrack",
+            "(Original Series Soundtrack)",
+        ):
+            with self.subTest(only=only):
+                self.assertStrips(only, only)
+
+    # -- empties and junk --
+
+    def test_empty_input(self):
+        self.assertEqual(base.strip_album_noise(""), "")
+        self.assertEqual(base.strip_album_noise("   "), "")
+        self.assertEqual(base.strip_album_noise(None), "")
+
+    def test_idempotent(self):
+        for album in (
+            "Queen (Original Motion Picture Soundtrack)",
+            "Moneyball: Original Motion Picture Soundtrack",
+            "Masaan (Original Motion Picture Soundtrack) - Single",
+        ):
+            with self.subTest(album=album):
+                once = base.strip_album_noise(album)
+                self.assertEqual(base.strip_album_noise(once), once)
+
+    def test_unicode_is_preserved(self):
+        self.assertStrips(
+            "ढगाला लागली कळ (Original Motion Picture Soundtrack)", "ढगाला लागली कळ"
+        )
+
+    # -- configuration --
+
+    @override_settings(ALBUM_SUFFIX_NOISE=[])
+    def test_an_empty_list_strips_nothing(self):
+        album = "Queen (Original Motion Picture Soundtrack)"
+        self.assertEqual(base.strip_album_noise(album), album)
+
+    @override_settings(ALBUM_SUFFIX_NOISE=["", "   "])
+    def test_blank_entries_are_ignored(self):
+        album = "Queen (Original Motion Picture Soundtrack)"
+        self.assertEqual(base.strip_album_noise(album), album)
+
+    @override_settings(ALBUM_SUFFIX_NOISE=["(Live)"])
+    def test_the_list_is_what_decides(self):
+        self.assertEqual(base.strip_album_noise("Wembley (Live)"), "Wembley")
+        album = "Queen (Original Motion Picture Soundtrack)"
+        self.assertEqual(base.strip_album_noise(album), album)
+
+    @override_settings(ALBUM_SUFFIX_NOISE=["A (B) C"])
+    def test_a_phrase_containing_brackets_is_still_literal(self):
+        # Nothing is compiled from the entry, so its brackets are just text.
+        self.assertEqual(base.strip_album_noise("Foo A (B) C"), "Foo")
+
+    @override_settings(ALBUM_SUFFIX_NOISE=[r"A.*C"])
+    def test_a_phrase_that_looks_like_a_pattern_is_not_one(self):
+        self.assertEqual(base.strip_album_noise("Foo A.*C bar"), "Foo bar")
+        self.assertEqual(base.strip_album_noise("Foo ABC bar"), "Foo ABC bar")
+
+
+class TrackMetadataBoundaryTests(SimpleTestCase):
+    """Every outside answer becomes a TrackMetadata, so this is the one gate."""
+
+    def test_construction_strips_the_album(self):
+        meta = TrackMetadata(album="Queen (Original Motion Picture Soundtrack)")
+        self.assertEqual(meta.album, "Queen")
+
+    def test_replace_strips_too(self):
+        from dataclasses import replace as dc_replace
+
+        meta = dc_replace(
+            TrackMetadata(), album="Silsila (Original Motion Picture Soundtrack)"
+        )
+        self.assertEqual(meta.album, "Silsila")
+
+    def test_merged_with_strips_too(self):
+        merged = TrackMetadata().merged_with(
+            TrackMetadata(album="Dhanak (Original Motion Picture Soundtrack)")
+        )
+        self.assertEqual(merged.album, "Dhanak")
+
+    def test_the_two_spellings_become_one_string(self):
+        # The whole point: 11 albums were split into 25 folders by this.
+        plain = TrackMetadata(album="Rang De Basanti")
+        suffixed = TrackMetadata(album="Rang De Basanti (Original Motion Picture Soundtrack)")
+        self.assertEqual(plain.album, suffixed.album)
+
+    def test_no_other_field_is_altered(self):
+        meta = TrackMetadata(
+            title="Song (Original Motion Picture Soundtrack)",
+            artist="A (Original Motion Picture Soundtrack)",
+        )
+        self.assertIn("Original Motion Picture Soundtrack", meta.title)
+        self.assertIn("Original Motion Picture Soundtrack", meta.artist)
+
+
+class AlbumNoiseRobustnessTests(SimpleTestCase):
+    """Deliberate limits, pinned so nobody "fixes" them into real bugs."""
+
+    def test_a_non_string_album_does_not_raise(self):
+        # Every TrackMetadata runs through the strip, including ones built
+        # straight from a provider's JSON where a field may not be a string.
+        for odd in (123, 4.5, True):
+            with self.subTest(odd=odd):
+                self.assertEqual(base.strip_album_noise(odd), str(odd))
+
+    def test_a_non_string_album_survives_construction(self):
+        self.assertEqual(TrackMetadata(album=2018).album, "2018")
+
+    def test_an_unbalanced_closing_bracket_is_left_alone(self):
+        # Deliberate. Adding ")" to the trailing strip would turn
+        # "Foo (Live)" into "Foo (Live" — a far worse bug than this.
+        self.assertEqual(
+            base.strip_album_noise("Queen Original Motion Picture Soundtrack)"),
+            "Queen )",
+        )
+
+    def test_a_following_bracket_group_is_preserved(self):
+        # The case the rule above protects.
+        for album, expected in (
+            ("Foo (Original Motion Picture Soundtrack) (Live)", "Foo (Live)"),
+            ("Foo (Original Motion Picture Soundtrack) [Remastered]", "Foo [Remastered]"),
+        ):
+            with self.subTest(album=album):
+                self.assertEqual(base.strip_album_noise(album), expected)
+
+    def test_a_phrase_with_no_separator_around_it_still_goes(self):
+        self.assertEqual(
+            base.strip_album_noise("Queen(Original Motion Picture Soundtrack)"), "Queen"
+        )
+
+    def test_a_long_title_is_not_truncated(self):
+        long_title = "A" * 5000
+        self.assertEqual(
+            base.strip_album_noise(f"{long_title} (Original Motion Picture Soundtrack)"),
+            long_title,
+        )

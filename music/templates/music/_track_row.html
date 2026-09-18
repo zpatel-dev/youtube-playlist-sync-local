@@ -119,6 +119,13 @@ the field heading, which is why every cell carries one.
                 <i class="bi bi-arrow-counterclockwise"></i>
             </button>
             {% endif %}
+
+            <button type="button" class="btn btn-sm btn-outline-danger btn-icon js-delete"
+                    data-track-id="{{ track.id }}"
+                    title="Delete this track — file and record"
+                    aria-label="Delete this track, file and record">
+                <i class="bi bi-trash3"></i>
+            </button>
         </div>
     </td>
 </tr>

@@ -136,4 +136,9 @@ would vanish while being read.
 <div id="suggestion-panel" class="card shadow suggestion-panel" hidden
      role="dialog" aria-modal="false" aria-label="Close matches"></div>
 
+{% comment %} Its own panel, not the suggestion one: that panel refetches
+itself on every SSE update, which would wipe a half-typed confirmation. {% endcomment %}
+<div id="delete-panel" class="card shadow suggestion-panel" hidden
+     role="dialog" aria-modal="true" aria-label="Delete this track"></div>
+
 {% endblock %}
