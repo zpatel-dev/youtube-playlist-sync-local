@@ -7,9 +7,27 @@ something actually changes, and nothing at all in between.
 
 {% block title %}Library · Music Library{% endblock %}
 
+{% block navbar_search %}
+    {# Desktop: inline and centred in the bar. #}
+    {% include "music/_search_form.html" with wrapper_class="mx-auto d-none d-md-flex" %}
+{% endblock %}
+
+{% block navbar_search_mobile %}
+    {# Phone: an icon in the bar, next to the hamburger but not inside it. #}
+    <button class="btn btn-sm btn-outline-secondary d-md-none order-1 me-2"
+            type="button" data-bs-toggle="collapse" data-bs-target="#mobile-search"
+            aria-controls="mobile-search" aria-expanded="false" aria-label="Search the library">
+        <i class="bi bi-search"></i>
+    </button>
+    {# w-100 makes it wrap onto its own row once open. #}
+    <div class="collapse w-100 d-md-none order-3" id="mobile-search">
+        {% include "music/_search_form.html" with wrapper_class="py-2" %}
+    </div>
+{% endblock %}
+
 {% block content %}
 
-<div class="d-flex flex-column flex-lg-row justify-content-between align-items-lg-center gap-3 mb-3">
+<div class="d-flex flex-wrap justify-content-between align-items-center gap-3 mb-3">
     <div class="d-flex align-items-center gap-2 flex-wrap">
         <h1 class="h4 mb-0">Library</h1>
         <span class="badge text-bg-secondary rounded-pill">{{ page_obj.paginator.count }}</span>
@@ -20,24 +38,6 @@ something actually changes, and nothing at all in between.
         </span>
     </div>
 
-    <form method="get" action="{% url 'dashboard' %}" class="d-flex gap-2 library-search" role="search">
-        {% comment %}
-        Sort and every filter survive a search; page does not, or you land on an
-        empty page. A GET form submits only its own fields, so anything not
-        repeated here would be silently dropped the moment someone types.
-        {% endcomment %}
-        <input type="hidden" name="sort" value="{{ sort }}">
-        <input type="hidden" name="state" value="{{ state }}">
-        <input type="hidden" name="since" value="{{ since }}">
-        <input type="hidden" name="on" value="{{ on }}">
-        <input type="hidden" name="by" value="{{ by }}">
-        <div class="input-group input-group-sm" style="min-width: 16rem;">
-            <span class="input-group-text"><i class="bi bi-search"></i></span>
-            <input type="search" class="form-control" name="q" value="{{ q }}"
-                   placeholder="Title, artist, album or filename" aria-label="Search the library">
-            <button class="btn btn-outline-secondary" type="submit">Search</button>
-        </div>
-    </form>
 </div>
 
 {# Counts. Aggregate queries only — never a row dump (audit A2). #}
@@ -56,7 +56,18 @@ this page that will not resolve itself by waiting.
 </div>
 
 <div class="card mb-3">
-    {# `toolbar` lets app.css give these full-width thumb targets under 768px. #}
+    {% comment %} On a phone these nine controls filled the screen before a
+       single track was visible, so they collapse behind one button. The
+       `show` class is added back at >=768px in app.css, where there is room —
+       Bootstrap's collapse only toggles the class, so a media query can hold
+       it open without any JS. {% endcomment %}
+    <button class="btn btn-sm btn-outline-primary w-100 d-md-none m-2 toolbar-toggle"
+            type="button" data-bs-toggle="collapse" data-bs-target="#library-actions"
+            aria-expanded="false" aria-controls="library-actions">
+        <i class="bi bi-sliders"></i> Actions
+    </button>
+
+    <div class="collapse d-md-block" id="library-actions">
     <div class="card-body py-2 d-flex flex-wrap gap-2 align-items-center toolbar">
         <span class="small text-body-secondary me-1 d-none d-md-inline">Actions</span>
 
@@ -91,10 +102,14 @@ this page that will not resolve itself by waiting.
         <div class="ms-auto">
             <button type="button" class="btn btn-sm btn-outline-secondary"
                     hx-post="{% url 'action_update_ytdlp' %}" hx-swap="none"
-                    hx-confirm="Upgrade yt-dlp and restart the service? The dashboard will be briefly unavailable.">
+                    hx-confirm="Upgrade yt-dlp and restart the service?&#10;&#10;Installed now: {{ ytdlp_version }}&#10;&#10;The dashboard will be briefly unavailable.">
                 <i class="bi bi-arrow-up-circle"></i> Update yt-dlp
+                {% if ytdlp_version %}
+                <span class="badge bg-body-secondary text-body-secondary border ms-1 font-monospace">{{ ytdlp_version }}</span>
+                {% endif %}
             </button>
         </div>
+    </div>
     </div>
 </div>
 

@@ -15,6 +15,7 @@ from django.db import connection
 from django.urls import reverse
 from django.utils import timezone
 
+from music import views
 from music.models import Job, JobState
 
 
@@ -41,12 +42,25 @@ class JobsPageTests(TestCase):
         for job in (self.succeeded, self.failed, self.queued):
             self.assertIn(job.kind, body)
 
-    def test_list_does_not_carry_payloads_or_tracebacks(self):
-        # These are unbounded per row; carrying them is what the detail modal
-        # exists to avoid.
+    def test_list_does_not_carry_payloads(self):
+        # A payload is arbitrary JSON and unbounded per row; that is what the
+        # detail modal exists for.
         body = self.client.get(reverse("jobs")).content.decode()
-        self.assertNotIn("fpcalc not found on PATH", body)
         self.assertNotIn("track_id", body)
+
+    def test_a_failure_shows_its_reason(self):
+        # A row that says only "Failed" forces the modal open to learn
+        # anything, which is worse than a bounded preview.
+        body = self.client.get(reverse("jobs")).content.decode()
+        self.assertIn("fpcalc not found on PATH", body)
+
+    def test_a_long_error_is_truncated_not_dumped(self):
+        # The reason the full error is not carried: bounded in SQL, so a page
+        # of rows cannot become a page of tracebacks.
+        self.failed.error = "Traceback:" + ("x" * 4000)
+        self.failed.save(update_fields=["error"])
+        body = self.client.get(reverse("jobs")).content.decode()
+        self.assertNotIn("x" * (views.JOB_ERROR_PREVIEW + 1), body)
 
     def test_state_filter_narrows_the_list(self):
         body = self.client.get(reverse("jobs"), {"state": JobState.FAILED}).content.decode()

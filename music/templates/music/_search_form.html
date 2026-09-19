@@ -1,0 +1,26 @@
+{% comment %}
+The library search. Rendered twice — inline in the navbar on a desktop, and
+behind a search icon on a phone, where putting it inside the hamburger buried
+the control people reach for most. Only one is ever visible, and each form
+submits independently, so the duplication costs a little markup and nothing else.
+
+`wrapper_class` is what the caller uses to pick which.
+{% endcomment %}
+<form method="get" action="{% url 'dashboard' %}" class="d-flex gap-2 library-search {{ wrapper_class }}" role="search">
+        {% comment %}
+        Sort and every filter survive a search; page does not, or you land on an
+        empty page. A GET form submits only its own fields, so anything not
+        repeated here would be silently dropped the moment someone types.
+        {% endcomment %}
+        <input type="hidden" name="sort" value="{{ sort }}">
+        <input type="hidden" name="state" value="{{ state }}">
+        <input type="hidden" name="since" value="{{ since }}">
+        <input type="hidden" name="on" value="{{ on }}">
+        <input type="hidden" name="by" value="{{ by }}">
+        <div class="input-group input-group-sm">
+            <span class="input-group-text"><i class="bi bi-search"></i></span>
+            <input type="search" class="form-control" name="q" value="{{ q }}"
+                   placeholder="Title, artist, album or filename" aria-label="Search the library">
+            <button class="btn btn-outline-secondary" type="submit">Search</button>
+        </div>
+    </form>

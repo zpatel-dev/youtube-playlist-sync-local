@@ -371,4 +371,19 @@
             closeDelete();
         }
     });
+
+
+    // -------------------------------------------------- mobile search focus
+    //
+    // Tapping the icon should land you in the field with the keyboard up,
+    // not in an open box you have to tap again. `shown.bs.collapse` rather
+    // than the click: the input cannot take focus while it is still hidden.
+
+    var mobileSearch = document.getElementById('mobile-search');
+    if (mobileSearch) {
+        mobileSearch.addEventListener('shown.bs.collapse', function () {
+            var field = mobileSearch.querySelector('input[type="search"]');
+            if (field) { field.focus(); }
+        });
+    }
 })();

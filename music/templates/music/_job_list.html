@@ -34,14 +34,28 @@ filter and page controls consistent with the rows they describe.
                         </span>
                         {% endif %}
                     </td>
-                    <td class="small text-body-secondary">
-                        {% if job.message %}{{ job.message|truncatechars:90 }}
-                        {% else %}<span class="text-body-tertiary">&mdash;</span>{% endif %}
+                    {% comment %} A failed job's reason lives in `error`, which
+                       was never rendered here — the row said only "Failed" and
+                       you had to open the detail to learn anything. {% endcomment %}
+                    <td class="small text-body-secondary job-result">
+                        {% if job.message %}
+                            <span class="job-message">{{ job.message|truncatechars:160 }}</span>
+                        {% elif not job.error_preview %}
+                            <span class="text-body-tertiary">&mdash;</span>
+                        {% endif %}
+                        {% if job.error_preview %}
+                            <span class="job-error">{{ job.error_preview }}</span>
+                        {% endif %}
                     </td>
                     <td class="text-end small text-body-secondary">
                         {% if job.started_at %}{{ job.duration_seconds|duration_short }}{% else %}&mdash;{% endif %}
                     </td>
-                    <td class="small text-body-secondary">{{ job.created_at|date:"M j, H:i:s" }}</td>
+                    <td class="small text-body-secondary">
+                        {{ job.created_at|date:"M j, H:i:s" }}
+                        {% if job.finished_at %}
+                        <span class="d-block text-body-tertiary">done {{ job.finished_at|timesince }} ago</span>
+                        {% endif %}
+                    </td>
                     <td class="text-end">
                         <button type="button" class="btn btn-sm btn-outline-secondary"
                                 data-bs-toggle="modal" data-bs-target="#jobModal"

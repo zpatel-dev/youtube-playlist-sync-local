@@ -501,42 +501,42 @@ a.text-decoration-none:hover .badge { filter: brightness(1.12); }
  * every Bootstrap utility in the templates already reads them through var(),
  * so nothing else needs touching and light mode is untouched.
  *
- * The page is near-black rather than a dark grey: #050607, which is about a
- * fortieth of the luminance of Bootstrap's #212529. Surfaces are lifted just
- * enough to separate, and the border does the rest of the work.
+ * A hair off black rather than #000 itself: pure black reads harsh against
+ * bright album art and gives surfaces nothing to sit on. Cards are lifted only
+ * enough to separate (1.09:1); the border does the rest of the work.
  *
  * Measured against the page background:
- *   body       #eef1f4  17.9:1   (was 11.9)
- *   secondary  #a2acb8   8.8:1   (was  7.3)
- *   tertiary   #8b95a2   6.7:1   (was  4.1, below AA)
- * and against a card, the tightest case, tertiary still holds 6.1:1.
+ *   body       #f1f3f5  18.5:1   (was 11.9)
+ *   secondary  #a8b2bd   9.5:1   (was  7.3)
+ *   tertiary   #8f99a6   7.1:1   (was  4.1, below AA)
+ * and against a card, the tightest case, tertiary still holds 6.6:1.
  */
 [data-bs-theme="dark"] {
-    --bs-body-bg: #050607;
-    --bs-body-bg-rgb: 5, 6, 7;
+    --bs-body-bg: #030405;
+    --bs-body-bg-rgb: 3, 4, 5;
 
     /* Cards, pills and table stripes. Only ~1.1:1 from the page, which is what
        keeps a dark UI calm; the border below is what actually draws the edge. */
-    --bs-secondary-bg: #101318;
-    --bs-secondary-bg-rgb: 16, 19, 24;
-    --bs-tertiary-bg: #0a0c0e;
-    --bs-tertiary-bg-rgb: 10, 12, 14;
+    --bs-secondary-bg: #0e1116;
+    --bs-secondary-bg-rgb: 14, 17, 22;
+    --bs-tertiary-bg: #050607;
+    --bs-tertiary-bg-rgb: 5, 6, 7;
 
-    --bs-body-color: #eef1f4;
-    --bs-body-color-rgb: 238, 241, 244;
+    --bs-body-color: #f1f3f5;
+    --bs-body-color-rgb: 241, 243, 245;
     --bs-emphasis-color: #ffffff;
     --bs-emphasis-color-rgb: 255, 255, 255;
 
     /* Opaque, not Bootstrap's rgba(): an alpha colour changes contrast
        depending on what it happens to sit on, so the same label was legible on
        the page and not on a card. */
-    --bs-secondary-color: #a2acb8;
-    --bs-secondary-color-rgb: 162, 172, 184;
-    --bs-tertiary-color: #8b95a2;
-    --bs-tertiary-color-rgb: 139, 149, 162;
+    --bs-secondary-color: #a8b2bd;
+    --bs-secondary-color-rgb: 168, 178, 189;
+    --bs-tertiary-color: #8f99a6;
+    --bs-tertiary-color-rgb: 143, 153, 166;
 
     /* Bootstrap's #495057 disappeared against a near-black page. */
-    --bs-border-color: #2d333c;
+    --bs-border-color: #2a2f38;
     --bs-border-color-translucent: rgba(255, 255, 255, .09);
 }
 
@@ -577,3 +577,96 @@ a.text-decoration-none:hover .badge { filter: brightness(1.12); }
 /* A path is monospace at a small size, which is the hardest thing here to
    read; a little tracking separates the characters without costing a line. */
 .path-text { font-size: .8rem; letter-spacing: .01em; }
+
+/* --- search in the navbar -----------------------------------------------
+   The search lives in the navbar rather than in a second sticky bar: both
+   would want `top: 0`, and the page one covered the Live indicator, the theme
+   toggle and Settings. One sticky element, nothing to overlap.
+
+   Bounded so it takes the middle of the bar without crowding either side; it
+   goes full width once the navbar collapses. */
+.library-search { flex: 0 1 24rem; min-width: 0; }
+.library-search .input-group { min-width: 0; }
+
+@media (max-width: 767.98px) {
+    /* The mobile copy is its own full-width row under the bar, not a column
+       squeezed beside the brand. */
+    .library-search { flex: 1 1 100%; }
+    /* Keep the brand, the search icon and the hamburger on one line in that
+       order; the search row wraps below them. */
+    .navbar > .container-xxl { flex-wrap: wrap; }
+}
+
+/* --- actions toolbar -----------------------------------------------------
+   Collapsed on a phone, always open above it. Bootstrap's collapse only
+   toggles `.show`, so `display: flex` here holds it open at >=768px without
+   any JS and without fighting the plugin. */
+@media (min-width: 768px) {
+    #library-actions.collapse:not(.show) { display: block !important; }
+    .toolbar-toggle { display: none !important; }
+}
+@media (max-width: 767.98px) {
+    /* The toggle is the only thing above the fold; give it a real target. */
+    .toolbar-toggle { min-height: 44px; }
+}
+
+/* --- job log -------------------------------------------------------------
+   A failure's reason is the whole point of the row, so it wraps instead of
+   being cut at a fixed width, and is capped rather than unbounded. */
+.job-result { max-width: 38rem; }
+.job-result .job-message { overflow-wrap: anywhere; }
+.job-result .job-error {
+    display: block;
+    margin-top: .15rem;
+    font-family: var(--bs-font-monospace);
+    font-size: .75rem;
+    line-height: 1.35;
+    color: var(--bs-danger-text-emphasis);
+    overflow-wrap: anywhere;
+}
+.job-table td { vertical-align: top; }
+.job-table code { font-size: .8rem; }
+
+/* --- compact phone layout ------------------------------------------------
+ * The controls were costing most of the first screen before a single track
+ * appeared: stat badges wrapping to two rows, an Actions button with a full
+ * margin box of its own, filter pills on three rows, and a card gap between
+ * each. Tightening the vertical rhythm is what buys the space — the cards keep
+ * their internal padding, so it reads as roomy rather than cramped.
+ */
+@media (max-width: 767.98px) {
+    /* One consistent gap between the stacked cards instead of Bootstrap's
+       mb-3 on each. */
+    main > .container-xxl > *,
+    .card.mb-3,
+    #stats-panel.mb-3 { margin-bottom: .5rem !important; }
+
+    main.container-xxl { padding-top: .75rem !important; }
+
+    /* The page heading and its badges share one line rather than two. */
+    h1.h4 { font-size: 1.15rem; }
+
+    /* Stat badges: the count is what matters, the padding was not. */
+    #stats-panel .badge {
+        font-size: .72rem;
+        padding: .3rem .5rem;
+    }
+    #stats-panel .d-flex { gap: .3rem !important; }
+
+    /* The Actions toggle had m-2 all round, which is a 16px frame on a
+       full-width button. */
+    .toolbar-toggle { margin: .5rem !important; width: calc(100% - 1rem) !important; }
+
+    /* Filter pills: three rows of tall buttons became the tallest thing on
+       the page. */
+    .filter-bar .card-body { padding: .5rem !important; }
+    .state-filter > .btn {
+        padding: .25rem .5rem;
+        font-size: .78rem;
+    }
+    .filter-bar .dropdown > .btn {
+        padding: .3rem .5rem;
+        font-size: .78rem;
+    }
+    .filter-bar .vr { display: none !important; }
+}

@@ -36,6 +36,7 @@ from django.conf import settings
 from django.core.paginator import EmptyPage, PageNotAnInteger, Paginator
 from django.db import connections
 from django.db.models import Count, F, Q
+from django.db.models.functions import Substr
 from django.http import Http404, HttpResponse, StreamingHttpResponse
 from django.shortcuts import get_object_or_404, render
 from django.utils import timezone
@@ -431,6 +432,20 @@ def _held_videos() -> dict:
     return {"held_videos": rows, "held_total": held.count()}
 
 
+def _ytdlp_version() -> str:
+    """The running yt-dlp version, or "" if it cannot be determined.
+
+    Never raises: a missing yt-dlp must not take the dashboard down with it.
+    """
+    try:
+        from music.ingest import youtube
+
+        return youtube.ytdlp_version()
+    except Exception:
+        log.debug("could not read the yt-dlp version", exc_info=True)
+        return ""
+
+
 def dashboard(request):
     """The library: searchable, sortable, paginated, live via SSE."""
     return render(
@@ -442,6 +457,9 @@ def dashboard(request):
             # row asked for it. Rendering it per row would repeat this list
             # fifty times for a feature used once in a while.
             "providers": identify_module.available_names(),
+            # Read from the imported module, so it reports what this process
+            # is actually running rather than what pip last installed.
+            "ytdlp_version": _ytdlp_version(),
             **_tracks_page(request),
             **_stats(),
             **_jobs(),
@@ -466,14 +484,23 @@ def fragment_jobs(request):
     return render(request, "music/_jobs.html", _jobs())
 
 
-#: Everything `_job_row.html` renders. `payload` and `error` are deliberately
-#: absent: an error can be 4000 characters and a payload arbitrary JSON, and
-#: multiplying that by a page of rows is exactly the kind of pointless transfer
-#: this app avoids. Both are fetched per job by `job_detail`.
+#: Everything `_job_row.html` renders. `payload` and the full `error` are
+#: deliberately absent: an error can be 4000 characters and a payload arbitrary
+#: JSON, and multiplying that by a page of rows is exactly the kind of pointless
+#: transfer this app avoids. Both are fetched per job by `job_detail`.
+#:
+#: A failure's *reason* still belongs in the list — a row that says only
+#: "Failed" makes you open the modal to learn anything at all — so it is
+#: annotated as a fixed-length prefix instead. That keeps the transfer bounded
+#: and, being part of the same query, adds no per-row lookup.
 JOB_LIST_FIELDS = (
     "id", "kind", "state", "attempts", "max_attempts",
     "message", "created_at", "started_at", "finished_at",
 )
+
+#: How much of an error the list carries. Enough for the one line that says what
+#: went wrong, nowhere near a whole traceback.
+JOB_ERROR_PREVIEW = 160
 
 JOB_STATE_FILTERS = (
     ("", "All"),
@@ -500,7 +527,12 @@ def jobs(request):
 
     # -id rather than -created_at: same order (ids are monotonic), but it reads
     # straight off the primary key instead of the created_at index.
-    page = _paginate(queryset.only(*JOB_LIST_FIELDS).order_by("-id"), request)
+    page = _paginate(
+        queryset.only(*JOB_LIST_FIELDS)
+        .annotate(error_preview=Substr("error", 1, JOB_ERROR_PREVIEW))
+        .order_by("-id"),
+        request,
+    )
 
     context = {
         "nav": "jobs",

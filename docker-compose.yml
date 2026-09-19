@@ -35,9 +35,19 @@ services:
       - ./_devdata/staging:/media/staging               # <- DOWNLOAD_STAGING
       - ./_devdata/db:/data                             # <- the SQLite file
 
+      # Live edit loop. The app code is baked into the image, so without this
+      # a CSS or template change needs a full rebuild before it is visible.
+      # Templates and static files are re-read per request (see DJANGO_DEBUG
+      # below); a change to .py still needs `docker restart music-manager-pi`.
+      - ./music:/app/music
+
     environment:
       DJANGO_SECRET_KEY: container-dev-key-not-for-any-real-deployment
-      DJANGO_DEBUG: "0"
+      # 1, not 0, because this is the local sandbox: it makes WhiteNoise read
+      # static files from the app directory on each request rather than from
+      # the copy collected at build time, which is what lets the bind mount
+      # above show up. The Pi runs 0.
+      DJANGO_DEBUG: "1"
       DJANGO_ALLOWED_HOSTS: "*"
       TIME_ZONE: UTC
       LOG_LEVEL: INFO
