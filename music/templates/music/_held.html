@@ -2,6 +2,10 @@
 Playlist entries that were not downloaded, because YouTube does not describe
 them as songs — a lyric video, a film clip, a fan upload.
 
+Collapsed by default. This is a standing list, not an alert: it only shrinks
+when someone acts on it, so expanded it would push the library off the screen
+every visit.
+
 Both links are here because opening the same id on YouTube Music is what
 answers the question fastest: an art track shows an album there, a video
 upload does not.
@@ -9,38 +13,48 @@ upload does not.
 {% load music_extras %}
 
 {% if held_videos %}
-<div class="alert alert-warning" role="alert">
-    <div class="mb-2">
-        <i class="bi bi-exclamation-triangle-fill"></i>
+<details class="mb-3">
+    <summary class="text-warning-emphasis">
+        <i class="bi bi-exclamation-triangle"></i>
         <strong>{{ held_total }} playlist entr{{ held_total|pluralize:"y,ies" }} not downloaded</strong>
-        &mdash; these do not look like songs from YouTube Music. Check one, then
-        approve it if you want it anyway.
-    </div>
+        <span class="text-body-secondary">&mdash; these do not look like songs
+            from YouTube Music. Remove the link from your playlist and they go
+            on the next sync, or settle them here.</span>
+    </summary>
 
-    {% for video in held_videos %}
-    <div class="d-flex flex-wrap justify-content-between align-items-start gap-2 border-top py-2">
-        <div class="me-auto" style="min-width:0">
-            <div class="fw-semibold text-break">{{ video.title|default:video.video_id }}</div>
-            <div class="small text-body-secondary text-break">
-                {{ video.uploader }}{% if video.duration %} &middot; {{ video.duration|hms }}{% endif %}
+    <div class="alert alert-warning mt-2 mb-0">
+        {% for video in held_videos %}
+        <div class="d-flex flex-wrap justify-content-between align-items-start gap-2 {% if not forloop.first %}border-top pt-2 {% endif %}pb-2">
+            <div class="me-auto" style="min-width:0">
+                <div class="fw-semibold text-break">{{ video.title|default:video.video_id }}</div>
+                <div class="small text-body-secondary text-break">
+                    {{ video.uploader }}{% if video.duration %} &middot; {{ video.duration|hms }}{% endif %}
+                    &middot; {{ video.hold_reason }}
+                </div>
+                <div class="small mt-1">
+                    <a href="https://www.youtube.com/watch?v={{ video.video_id }}"
+                       target="_blank" rel="noopener noreferrer">
+                        <i class="bi bi-youtube"></i> YouTube
+                    </a>
+                    <a class="ms-2" href="https://music.youtube.com/watch?v={{ video.video_id }}"
+                       target="_blank" rel="noopener noreferrer">
+                        <i class="bi bi-music-note-list"></i> YouTube&nbsp;Music
+                    </a>
+                </div>
             </div>
-            <div class="small text-warning-emphasis">{{ video.hold_reason }}</div>
-            <div class="small mt-1">
-                <a href="https://www.youtube.com/watch?v={{ video.video_id }}"
-                   target="_blank" rel="noopener noreferrer">
-                    <i class="bi bi-youtube"></i> YouTube
-                </a>
-                <a class="ms-2" href="https://music.youtube.com/watch?v={{ video.video_id }}"
-                   target="_blank" rel="noopener noreferrer">
-                    <i class="bi bi-music-note-list"></i> YouTube&nbsp;Music
-                </a>
+            <div class="btn-group btn-group-sm flex-shrink-0">
+                <button type="button" class="btn btn-outline-warning"
+                        hx-post="{% url 'action_approve_video' video.video_id %}" hx-swap="none">
+                    <i class="bi bi-download"></i> Download anyway
+                </button>
+                <button type="button" class="btn btn-outline-secondary"
+                        hx-post="{% url 'action_dismiss_video' video.video_id %}" hx-swap="none"
+                        title="Drop it from this list. It returns if the video is still in your playlist.">
+                    <i class="bi bi-x-lg"></i> Remove
+                </button>
             </div>
         </div>
-        <button type="button" class="btn btn-sm btn-outline-warning flex-shrink-0"
-                hx-post="{% url 'action_approve_video' video.video_id %}" hx-swap="none">
-            <i class="bi bi-download"></i> Download anyway
-        </button>
+        {% endfor %}
     </div>
-    {% endfor %}
-</div>
+</details>
 {% endif %}

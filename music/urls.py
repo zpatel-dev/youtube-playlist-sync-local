@@ -86,4 +86,9 @@ urlpatterns = [
         views.action_approve_video,
         name="action_approve_video",
     ),
+    path(
+        "actions/video/<str:pk>/dismiss/",
+        views.action_dismiss_video,
+        name="action_dismiss_video",
+    ),
 ]

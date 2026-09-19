@@ -10,6 +10,7 @@ both FAILED and invisible to the retry query.
 from __future__ import annotations
 
 from datetime import timedelta
+from typing import TYPE_CHECKING
 
 from django.db import models
 from django.utils import timezone
@@ -36,6 +37,13 @@ class TrackState(models.TextChoices):
 
 class Track(models.Model):
     """One audio file on disk."""
+
+    if TYPE_CHECKING:
+        # Django creates this at runtime from YoutubeVideo.track's
+        # related_name. Declared for the type checker only — without stubs it
+        # cannot see reverse accessors, and `getattr(track, "youtube_video")`
+        # in remover.py is written that way for the same reason.
+        youtube_video: YoutubeVideo | None
 
     # --- identity -------------------------------------------------------
     path = models.CharField(max_length=1024, unique=True)
@@ -165,10 +173,20 @@ class Availability(models.TextChoices):
     #: clip rather than the recording. Everything that queues a download
     #: already filters on AVAILABLE, so holding one here needs no new query.
     NEEDS_REVIEW = "NEEDS_REVIEW", "Needs review"
+    #: You looked and said no. The row is kept rather than deleted precisely so
+    #: the next sync does not re-create it from the playlist and ask again.
+    REJECTED = "REJECTED", "Rejected"
 
 
 class YoutubeVideo(models.Model):
     """A YouTube playlist entry. A thin source record pointing at a Track."""
+
+    if TYPE_CHECKING:
+        # Django adds `<field>_id` alongside every ForeignKey/OneToOne. It is
+        # the cheap way to ask "is there a track?" without fetching the row,
+        # which is why the code uses it — but no stubs means no type checker
+        # knows it exists.
+        track_id: int | None
 
     #: Not assumed to be 11 characters, so a future id format is not truncated.
     video_id = models.CharField(max_length=32, primary_key=True)

@@ -31,9 +31,12 @@ def sync(job_obj) -> str:
 
     stats = youtube.sync_playlist(url)
     queued = _queue_downloads()
+    dropped = stats.get("dropped", 0)
     return (
         f"{stats.get('seen', 0)} entries, {stats.get('added', 0)} new; "
         f"queued {queued} download(s)"
+        + (f"; dropped {dropped} held entr(ies) no longer in the playlist"
+           if dropped else "")
     )
 
 

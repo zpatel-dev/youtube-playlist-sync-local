@@ -177,3 +177,95 @@ class DashboardPanelTests(TestCase):
         _video(video_id="quiet0000001")
         html = self.client.get(reverse("dashboard")).content.decode()
         self.assertNotIn("not downloaded", html)
+
+
+class PruneAndDismissTests(TestCase):
+    """The two ways a held entry stops being noise."""
+
+    def _sync(self, ids):
+        """Run a sync whose playlist contains exactly `ids`."""
+        entries = {"entries": [
+            {"id": v, "title": f"Entry {v}", "uploader": "Someone",
+             "duration": 100, "availability": "public"} for v in ids]}
+        with mock.patch.object(youtube, "_ydl", side_effect=lambda o: FakeYDL(entries)):
+            return youtube.sync_playlist("https://example.invalid/list")
+
+    def test_a_held_entry_is_dropped_once_it_leaves_the_playlist(self):
+        _video(video_id="gone00000001", availability=Availability.NEEDS_REVIEW,
+               hold_reason="not a song")
+        _video(video_id="stay00000001")
+        stats = self._sync(["stay00000001"])
+        self.assertEqual(stats["dropped"], 1)
+        self.assertFalse(YoutubeVideo.objects.filter(pk="gone00000001").exists())
+        self.assertTrue(YoutubeVideo.objects.filter(pk="stay00000001").exists())
+
+    def test_a_held_entry_still_listed_is_kept_and_stays_held(self):
+        """The listing always says 'public'; that must not clear our verdict.
+
+        Without this the entry flips back to AVAILABLE on every sync, is
+        re-queued, re-probed over the network and re-held — forever.
+        """
+        _video(video_id="held00000003", availability=Availability.NEEDS_REVIEW,
+               hold_reason="not a song")
+        stats = self._sync(["held00000003"])
+        self.assertEqual(stats["dropped"], 0)
+        row = YoutubeVideo.objects.get(pk="held00000003")
+        self.assertEqual(row.availability, Availability.NEEDS_REVIEW)
+        self.assertEqual(row.hold_reason, "not a song")
+
+    def test_a_downloaded_track_is_never_pruned(self):
+        """Only held rows are dropped — a real track outlives its playlist entry."""
+        from music.models import Track
+        track = Track.objects.create(path="/tmp/kept-by-prune-test.mp3")
+        _video(video_id="have00000001", track=track)
+        stats = self._sync(["something0x"])
+        self.assertEqual(stats["dropped"], 0)
+        self.assertTrue(YoutubeVideo.objects.filter(pk="have00000001").exists())
+
+    def test_dismiss_marks_rejected_rather_than_deleting(self):
+        _video(video_id="drop00000001", availability=Availability.NEEDS_REVIEW,
+               hold_reason="not a song")
+        response = self.client.post(
+            reverse("action_dismiss_video", args=["drop00000001"]))
+        self.assertEqual(response.status_code, 204)
+        row = YoutubeVideo.objects.get(pk="drop00000001")
+        self.assertEqual(row.availability, Availability.REJECTED)
+        self.assertEqual(row.hold_reason, "")
+
+    def test_a_rejection_survives_the_next_sync(self):
+        """The whole point. Deleting the row instead would let the listing
+        re-create it and hold it again, so Remove would never stick."""
+        _video(video_id="nope00000001", availability=Availability.NEEDS_REVIEW)
+        self.client.post(reverse("action_dismiss_video", args=["nope00000001"]))
+        self._sync(["nope00000001"])          # still in the playlist
+        row = YoutubeVideo.objects.get(pk="nope00000001")
+        self.assertEqual(row.availability, Availability.REJECTED)
+
+    def test_a_rejected_entry_is_never_queued(self):
+        _video(video_id="nope00000002", availability=Availability.REJECTED)
+        self.assertEqual(handlers._queue_downloads(), 0)
+
+    def test_a_rejected_entry_is_not_shown_in_the_panel(self):
+        _video(video_id="nope00000003", availability=Availability.REJECTED)
+        html = self.client.get(reverse("dashboard")).content.decode()
+        self.assertNotIn("not downloaded", html)
+
+    def test_a_rejected_entry_is_dropped_once_it_leaves_the_playlist(self):
+        _video(video_id="nope00000004", availability=Availability.REJECTED)
+        stats = self._sync(["other0000001"])
+        self.assertEqual(stats["dropped"], 1)
+        self.assertFalse(YoutubeVideo.objects.filter(pk="nope00000004").exists())
+
+    def test_pruning_a_large_playlist_does_not_blow_the_parameter_limit(self):
+        """Every other __in in this module is chunked; this one must be too."""
+        _video(video_id="stale0000001", availability=Availability.NEEDS_REVIEW)
+        stats = self._sync([f"bulk{n:07d}" for n in range(1200)])
+        self.assertEqual(stats["seen"], 1200)
+        self.assertEqual(stats["dropped"], 1)
+
+    def test_dismiss_refuses_when_a_track_exists(self):
+        from music.models import Track
+        track = Track.objects.create(path="/tmp/dismiss-guard-test.mp3")
+        _video(video_id="hastrack0001", track=track)
+        self.client.post(reverse("action_dismiss_video", args=["hastrack0001"]))
+        self.assertTrue(YoutubeVideo.objects.filter(pk="hastrack0001").exists())

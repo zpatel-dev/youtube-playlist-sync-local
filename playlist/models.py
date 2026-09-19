@@ -1,3 +1,5 @@
+from typing import TYPE_CHECKING
+
 from django.db import models
 from django.utils.translation import gettext_lazy as _
 
@@ -106,6 +108,12 @@ class Job(models.Model):
         RUNNING = 'RUNNING', _('Running')
         SUCCESS = 'SUCCESS', _('Success')
         FAILED = 'FAILED', _('Failed')
+
+    if TYPE_CHECKING:
+        # Django adds `<field>_id` alongside every ForeignKey at runtime, and
+        # __str__ below uses it to name the target without fetching the Video.
+        # Declared only for the type checker; there are no Django stubs here.
+        video_id: int | None
 
     job_type = models.CharField(max_length=20, choices=JobType.choices)
     # Null for playlist-wide jobs (resync, tag-all, update-ytdlp).

@@ -43,6 +43,10 @@ VERSION_TIMEOUT = 30
 #: through it in a single `pk__in`.
 _ID_CHUNK = 400
 
+#: States this app assigns to itself. A playlist listing must never overwrite
+#: one of them, and they are the only rows a sync is allowed to prune.
+_OUR_VERDICTS = (Availability.NEEDS_REVIEW, Availability.REJECTED)
+
 
 @dataclass(frozen=True)
 class PlaylistEntry:
@@ -196,9 +200,10 @@ def _iter_entries(info: Any, *, depth: int = 0) -> Iterator[dict]:
 def sync_playlist(url: str) -> dict[str, int]:
     """Upsert every playlist entry into `YoutubeVideo`.
 
-    Returns `{"seen", "added", "updated"}`, where **updated counts rows whose
-    content changed**, not rows touched — `last_seen_at` is refreshed for every
-    seen row in one statement, and freshness is not a content change.
+    Returns `{"seen", "added", "updated", "dropped"}`, where **updated counts
+    rows whose content changed**, not rows touched — `last_seen_at` is refreshed
+    for every seen row in one statement, and freshness is not a content change.
+    `dropped` counts held entries removed because they left the playlist.
     """
     entries = list_playlist(url)
 
@@ -233,6 +238,15 @@ def sync_playlist(url: str) -> dict[str, int]:
             changed = [
                 field for field, value in values.items() if getattr(row, field) != value
             ]
+            # NEEDS_REVIEW and REJECTED are our judgement, not YouTube's, and
+            # the listing always says AVAILABLE. Letting it win would flip every
+            # held entry back, re-queue it and re-probe it on every sync — and
+            # would resurrect one you had explicitly rejected. A real
+            # availability change (private, deleted) still wins.
+            if (row.availability in _OUR_VERDICTS
+                    and values["availability"] == Availability.AVAILABLE
+                    and "availability" in changed):
+                changed.remove("availability")
             if not changed:
                 continue
             for field in changed:
@@ -248,10 +262,30 @@ def sync_playlist(url: str) -> dict[str, int]:
         for chunk in _chunks(list(unique), _ID_CHUNK):
             YoutubeVideo.objects.filter(pk__in=chunk).update(last_seen_at=now)
 
-    counts = {"seen": len(unique), "added": len(to_create), "updated": updated}
+        # Drop held entries that have left the playlist. Everything else is
+        # kept deliberately — a downloaded track outlives its playlist entry —
+        # but a held row owns no track and no file, so removing the link from
+        # the playlist is the obvious way to say "stop asking me about this",
+        # and without this it never stopped.
+        # Difference computed in Python, then deleted in chunks. An
+        # `exclude(__in=every id)` would hand SQLite one parameter per playlist
+        # entry, and this file caps those at _ID_CHUNK everywhere else for the
+        # same reason. The held set is a handful of rows, so reading it is cheap.
+        stale = [
+            vid for vid in YoutubeVideo.objects.filter(
+                availability__in=_OUR_VERDICTS, track__isnull=True
+            ).values_list("video_id", flat=True)
+            if vid not in unique
+        ]
+        dropped = 0
+        for chunk in _chunks(stale, _ID_CHUNK):
+            dropped += YoutubeVideo.objects.filter(pk__in=chunk).delete()[0]
+
+    counts = {"seen": len(unique), "added": len(to_create), "updated": updated,
+              "dropped": dropped}
     log.info(
-        "playlist sync: %s seen, %s added, %s updated",
-        counts["seen"], counts["added"], counts["updated"],
+        "playlist sync: %s seen, %s added, %s updated, %s held entr(ies) dropped",
+        counts["seen"], counts["added"], counts["updated"], counts["dropped"],
     )
     return counts
 

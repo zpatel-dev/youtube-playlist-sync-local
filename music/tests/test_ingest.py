@@ -224,7 +224,7 @@ class SyncPlaylistTests(TestCase):
 
     def test_first_run_creates_rows(self):
         counts = self._sync()
-        self.assertEqual(counts, {"seen": 4, "added": 4, "updated": 0})
+        self.assertEqual(counts, {"seen": 4, "added": 4, "updated": 0, "dropped": 0})
         self.assertEqual(YoutubeVideo.objects.count(), 4)
         self.assertEqual(
             YoutubeVideo.objects.get(pk="vid_private").availability,
@@ -258,7 +258,7 @@ class SyncPlaylistTests(TestCase):
         changed = {"entries": [dict(PLAYLIST["entries"][0], title="Renamed Song")]}
         counts = self._sync(changed)
 
-        self.assertEqual(counts, {"seen": 1, "added": 0, "updated": 1})
+        self.assertEqual(counts, {"seen": 1, "added": 0, "updated": 1, "dropped": 0})
         self.assertEqual(
             YoutubeVideo.objects.get(pk="vid_public0").title, "Renamed Song"
         )

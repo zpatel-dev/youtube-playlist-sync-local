@@ -990,6 +990,31 @@ def action_approve_video(request, pk: str):
 
 
 @require_POST
+def action_dismiss_video(request, pk: str):
+    """Reject a held entry: stop showing it, and stop asking about it.
+
+    The row is **kept**, marked REJECTED. Deleting it would be undone by the
+    next sync, which would re-create it from the playlist and hold it again —
+    so the row stays as a tombstone that both the panel and the download queue
+    skip. Removing the link from the playlist then clears it for good.
+    """
+    video = get_object_or_404(
+        YoutubeVideo.objects.only("video_id", "title", "track"), pk=pk
+    )
+    if video.track_id:
+        return _notify("That entry has a downloaded track — delete the track "
+                       "instead.", "warning")
+    label = video.title or video.video_id
+    video.availability = Availability.REJECTED
+    video.hold_reason = ""
+    video.save(update_fields=["availability", "hold_reason", "updated_at"])
+    events.bump("videos")
+    # Uploader-controlled text, safe only because the client builds the toast
+    # with textContent (A11).
+    return _notify(f"Rejected: {label}", "success")
+
+
+@require_POST
 def action_update_ytdlp(request):
     """Upgrade yt-dlp, then restart the service. Confirmed in the UI."""
     return _queued(
