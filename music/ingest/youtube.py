@@ -327,6 +327,29 @@ def _postprocessors() -> list[dict[str, Any]]:
     return chain
 
 
+def probe(video: YoutubeVideo, *, timeout: int = 30) -> dict[str, Any]:
+    """Read a video's metadata without fetching any audio.
+
+    This is what makes holding an entry cheap: `extract_info(download=False)`
+    is one page fetch, so a playlist full of lyric videos costs seconds to
+    judge instead of a download each. The fields that matter — `track`,
+    `artist`, `album`, `uploader` — are present here exactly as they would be
+    after a download.
+    """
+    url = video.url or WATCH_URL.format(video.video_id)
+    opts = {
+        "quiet": True,
+        "no_warnings": True,
+        "skip_download": True,
+        "noplaylist": True,
+        "socket_timeout": timeout,
+        "retries": 2,
+    }
+    with _ydl(opts) as ydl:
+        info = ydl.extract_info(url, download=False)
+    return info or {}
+
+
 def download_audio(
     video: YoutubeVideo,
     dest_dir: Path,

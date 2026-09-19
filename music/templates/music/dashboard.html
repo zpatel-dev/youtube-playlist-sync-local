@@ -41,6 +41,15 @@ something actually changes, and nothing at all in between.
 </div>
 
 {# Counts. Aggregate queries only — never a row dump (audit A2). #}
+{% comment %}
+Held entries sit above the library, not inside it: they are the one thing on
+this page that will not resolve itself by waiting.
+{% endcomment %}
+<div id="held-panel" hx-get="{% url 'fragment_held' %}"
+     hx-trigger="sse:update" hx-swap="innerHTML">
+    {% include "music/_held.html" %}
+</div>
+
 <div id="stats-panel" hx-get="{% url 'fragment_stats' %}"
      hx-trigger="sse:update" hx-swap="innerHTML" class="mb-3">
     {% include "music/_stats.html" %}

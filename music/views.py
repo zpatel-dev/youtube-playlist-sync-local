@@ -44,7 +44,8 @@ from django.views.decorators.http import require_POST
 from music import identify as identify_module
 from music.core import envfile, events
 from music.jobs import engine
-from music.models import Job, JobState, Track, TrackState, YoutubeVideo
+from music.models import (Availability, Job, JobState, Track, TrackState,
+                          YoutubeVideo)
 
 log = logging.getLogger("music.web")
 
@@ -415,6 +416,21 @@ def _jobs() -> dict:
 # --------------------------------------------------------------------------
 
 
+def _held_videos() -> dict:
+    """Playlist entries held because they do not look like songs.
+
+    Not memoized like `_stats`: that cache exists because the stats are grouped
+    aggregates over the whole library, while this is an indexed lookup capped
+    at 50 rows.
+    """
+    held = YoutubeVideo.objects.filter(availability=Availability.NEEDS_REVIEW)
+    rows = list(
+        held.only("video_id", "title", "uploader", "duration", "hold_reason")
+        .order_by("-updated_at")[:50]
+    )
+    return {"held_videos": rows, "held_total": held.count()}
+
+
 def dashboard(request):
     """The library: searchable, sortable, paginated, live via SSE."""
     return render(
@@ -429,6 +445,7 @@ def dashboard(request):
             **_tracks_page(request),
             **_stats(),
             **_jobs(),
+            **_held_videos(),
         },
     )
 
@@ -439,6 +456,10 @@ def fragment_tracks(request):
 
 def fragment_stats(request):
     return render(request, "music/_stats.html", _stats())
+
+
+def fragment_held(request):
+    return render(request, "music/_held.html", _held_videos())
 
 
 def fragment_jobs(request):
@@ -938,6 +959,31 @@ def action_download_video(request, pk: str):
         # toast with textContent (A11).
         f"Queued download: {video.title or video.video_id}",
         {"video_id": video.pk},
+        dedup_key=f"youtube.download:{video.pk}",
+        priority=3,
+    )
+
+
+@require_POST
+def action_approve_video(request, pk: str):
+    """Download a held entry anyway, because a person looked and said so.
+
+    `approved` travels in the job payload rather than on the row: the handler
+    reads it once and there is no extra column to keep in step.
+    """
+    video = get_object_or_404(
+        YoutubeVideo.objects.only("video_id", "title"), pk=pk
+    )
+    video.availability = Availability.AVAILABLE
+    video.hold_reason = ""
+    video.save(update_fields=["availability", "hold_reason", "updated_at"])
+    events.bump("videos")
+    return _queued(
+        "youtube.download",
+        # Uploader-controlled text, safe only because the client builds the
+        # toast with textContent (A11).
+        f"Approved, downloading: {video.title or video.video_id}",
+        {"video_id": video.pk, "approved": True},
         dedup_key=f"youtube.download:{video.pk}",
         priority=3,
     )

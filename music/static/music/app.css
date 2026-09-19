@@ -489,3 +489,91 @@ a.text-decoration-none:hover .badge { filter: brightness(1.12); }
 /* 44px so the gate is a thumb target, matching the Use button. */
 .delete-confirm-form .btn,
 .delete-confirm-form .form-control { min-height: 44px; }
+
+/* --- dark palette --------------------------------------------------------
+ *
+ * Bootstrap's own dark theme sits on #212529, a mid grey that reads as washed
+ * out next to real content, and its muted text (`--bs-tertiary-color`, an
+ * rgba at 50%) lands at 4.09:1 against that background — below WCAG AA, which
+ * is why the dim labels were hard to read.
+ *
+ * Redefining the variables is the whole change: every rule in this file and
+ * every Bootstrap utility in the templates already reads them through var(),
+ * so nothing else needs touching and light mode is untouched.
+ *
+ * The page is near-black rather than a dark grey: #050607, which is about a
+ * fortieth of the luminance of Bootstrap's #212529. Surfaces are lifted just
+ * enough to separate, and the border does the rest of the work.
+ *
+ * Measured against the page background:
+ *   body       #eef1f4  17.9:1   (was 11.9)
+ *   secondary  #a2acb8   8.8:1   (was  7.3)
+ *   tertiary   #8b95a2   6.7:1   (was  4.1, below AA)
+ * and against a card, the tightest case, tertiary still holds 6.1:1.
+ */
+[data-bs-theme="dark"] {
+    --bs-body-bg: #050607;
+    --bs-body-bg-rgb: 5, 6, 7;
+
+    /* Cards, pills and table stripes. Only ~1.1:1 from the page, which is what
+       keeps a dark UI calm; the border below is what actually draws the edge. */
+    --bs-secondary-bg: #101318;
+    --bs-secondary-bg-rgb: 16, 19, 24;
+    --bs-tertiary-bg: #0a0c0e;
+    --bs-tertiary-bg-rgb: 10, 12, 14;
+
+    --bs-body-color: #eef1f4;
+    --bs-body-color-rgb: 238, 241, 244;
+    --bs-emphasis-color: #ffffff;
+    --bs-emphasis-color-rgb: 255, 255, 255;
+
+    /* Opaque, not Bootstrap's rgba(): an alpha colour changes contrast
+       depending on what it happens to sit on, so the same label was legible on
+       the page and not on a card. */
+    --bs-secondary-color: #a2acb8;
+    --bs-secondary-color-rgb: 162, 172, 184;
+    --bs-tertiary-color: #8b95a2;
+    --bs-tertiary-color-rgb: 139, 149, 162;
+
+    /* Bootstrap's #495057 disappeared against a near-black page. */
+    --bs-border-color: #2d333c;
+    --bs-border-color-translucent: rgba(255, 255, 255, .09);
+}
+
+/* Badge and alert fills. Bootstrap's dark subtles were mixed for a #212529
+   page and sit too close to a near-black one to read as a tint. Each pairing
+   below clears 7:1. */
+[data-bs-theme="dark"] {
+    --bs-primary-bg-subtle: #0b2a52;
+    --bs-primary-border-subtle: #14427c;
+    --bs-primary-text-emphasis: #8bb9f0;
+
+    --bs-success-bg-subtle: #0d2e1c;
+    --bs-success-border-subtle: #16532f;
+    --bs-success-text-emphasis: #79dfa1;
+
+    --bs-info-bg-subtle: #06303a;
+    --bs-info-border-subtle: #0d5163;
+    --bs-info-text-emphasis: #7bd5e8;
+
+    --bs-warning-bg-subtle: #3a2c07;
+    --bs-warning-border-subtle: #6b520d;
+    --bs-warning-text-emphasis: #f2cc60;
+
+    --bs-danger-bg-subtle: #3b1418;
+    --bs-danger-border-subtle: #6d222a;
+    --bs-danger-text-emphasis: #f09aa2;
+
+    --bs-secondary-bg-subtle: #23272d;
+    --bs-secondary-border-subtle: #363c45;
+    --bs-secondary-text-emphasis: #c3cad2;
+}
+
+/* --- legibility ----------------------------------------------------------
+   The table is the page. These were sized when it held fewer columns. */
+
+.track-table td { font-size: .925rem; line-height: 1.45; }
+
+/* A path is monospace at a small size, which is the hardest thing here to
+   read; a little tracking separates the characters without costing a line. */
+.path-text { font-size: .8rem; letter-spacing: .01em; }

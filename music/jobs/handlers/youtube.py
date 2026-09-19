@@ -9,8 +9,11 @@ from pathlib import Path
 from django.conf import settings
 from django.utils import timezone
 
+from music.core import events
 from music.core.locks import track_locks
-from music.models import Availability, Source, Track, TrackState, YoutubeVideo
+from music.ingest import arttrack
+from music.models import (Availability, Source, Track, TrackState,
+                          YoutubeVideo)
 from music.jobs import engine
 from music.jobs.registry import job
 
@@ -77,6 +80,25 @@ def download(job_obj) -> str:
             return f"already downloaded: {video.track.path}"
         if video.availability != Availability.AVAILABLE:
             return f"skipped, availability is {video.availability}"
+
+        # Judge what this is before spending a download on it: once the file
+        # exists nothing downstream can tell a film clip from the recording.
+        # `approved` is set by the dashboard button, and skips the question.
+        if not job_obj.payload.get("approved"):
+            try:
+                reason = arttrack.hold_reason(youtube.probe(video))
+            except Exception as exc:
+                # A probe failure is not evidence either way; downloading
+                # something you can delete beats refusing on a network hiccup.
+                log.warning("probe failed for %s: %s", video_id, exc)
+            else:
+                if reason:
+                    video.availability = Availability.NEEDS_REVIEW
+                    video.hold_reason = reason[:255]
+                    video.save(update_fields=["availability", "hold_reason",
+                                              "updated_at"])
+                    events.bump("videos")
+                    return f"held for review: {reason}"
 
         staging = Path(settings.DOWNLOAD_STAGING)
         staging.mkdir(parents=True, exist_ok=True)

@@ -23,6 +23,7 @@ urlpatterns = [
     path("events/", views.stream_events, name="stream_events"),
     path("fragments/tracks/", views.fragment_tracks, name="fragment_tracks"),
     path("fragments/stats/", views.fragment_stats, name="fragment_stats"),
+    path("fragments/held/", views.fragment_held, name="fragment_held"),
     path("fragments/jobs/", views.fragment_jobs, name="fragment_jobs"),
 
     # --- settings (.env editor) ----------------------------------------
@@ -79,5 +80,10 @@ urlpatterns = [
         "actions/video/<str:pk>/download/",
         views.action_download_video,
         name="action_download_video",
+    ),
+    path(
+        "actions/video/<str:pk>/approve/",
+        views.action_approve_video,
+        name="action_approve_video",
     ),
 ]

@@ -67,6 +67,13 @@ class ThemeAwarenessTests(SimpleTestCase):
                 stripped = line.strip()
                 if stripped.startswith(("/*", "*", "//")):
                     continue
+                # Defining a --bs-* custom property is the one place a literal
+                # belongs: that is how a palette is declared, and every rule
+                # downstream still reads it through var() and re-maps with the
+                # theme. Using a literal anywhere else is the frozen-colour bug
+                # this test exists for.
+                if stripped.startswith("--bs-"):
+                    continue
                 if re.search(r":\s*#[0-9a-fA-F]{3,8}\b", stripped):
                     offenders.append(f"{path.name}:{number}  {stripped[:80]}")
         self.assertEqual(
@@ -102,3 +109,72 @@ class ThemeRenderTests(SimpleTestCase):
         ).read_text(encoding="utf-8", errors="ignore")
         self.assertIn("[data-bs-theme=dark]", css)
         self.assertIn("--bs-secondary-bg", css)
+
+
+def _relative_luminance(hex_colour: str) -> float:
+    value = hex_colour.lstrip("#")
+    channels = [int(value[i:i + 2], 16) / 255 for i in (0, 2, 4)]
+    linear = [c / 12.92 if c <= 0.03928 else ((c + 0.055) / 1.055) ** 2.4 for c in channels]
+    return 0.2126 * linear[0] + 0.7152 * linear[1] + 0.0722 * linear[2]
+
+
+def contrast(a: str, b: str) -> float:
+    """WCAG 2.1 contrast ratio between two opaque hex colours."""
+    first, second = _relative_luminance(a), _relative_luminance(b)
+    lighter, darker = max(first, second), min(first, second)
+    return (lighter + 0.05) / (darker + 0.05)
+
+
+class DarkPaletteContrastTests(SimpleTestCase):
+    """The dark palette must stay readable, not just look dark.
+
+    Bootstrap's own dark theme fails this: `--bs-tertiary-color` is an rgba at
+    50% over #212529, which computes to 4.09:1 — under WCAG AA. That is the bug
+    this palette replaces, so the numbers are asserted rather than eyeballed.
+    """
+
+    #: WCAG AA for body text.
+    MINIMUM = 4.5
+
+    def setUp(self):
+        css = (STATIC_DIR / "app.css").read_text(encoding="utf-8")
+        block = css[css.index('[data-bs-theme="dark"]'):]
+        self.vars = dict(re.findall(r"(--bs-[a-z-]+):\s*(#[0-9a-fA-F]{6})\s*;", block))
+
+    def _var(self, name):
+        self.assertIn(name, self.vars, f"{name} is not defined in the dark palette")
+        return self.vars[name]
+
+    def test_text_is_readable_on_the_page(self):
+        page = self._var("--bs-body-bg")
+        for name in ("--bs-body-color", "--bs-secondary-color", "--bs-tertiary-color"):
+            with self.subTest(colour=name):
+                self.assertGreaterEqual(contrast(self._var(name), page), self.MINIMUM)
+
+    def test_text_is_readable_on_a_card(self):
+        # The tightest case: a card is lighter than the page, so every text
+        # colour loses contrast against it.
+        card = self._var("--bs-secondary-bg")
+        for name in ("--bs-body-color", "--bs-secondary-color", "--bs-tertiary-color"):
+            with self.subTest(colour=name):
+                self.assertGreaterEqual(contrast(self._var(name), card), self.MINIMUM)
+
+    def test_it_is_actually_darker_than_bootstrap(self):
+        # The point of the override: #212529 is Bootstrap's dark page.
+        self.assertLess(
+            _relative_luminance(self._var("--bs-body-bg")),
+            _relative_luminance("#212529"),
+        )
+
+    def test_badge_text_is_readable_on_its_own_fill(self):
+        for tone in ("primary", "success", "info", "warning", "danger", "secondary"):
+            with self.subTest(tone=tone):
+                fill = self._var(f"--bs-{tone}-bg-subtle")
+                text = self._var(f"--bs-{tone}-text-emphasis")
+                self.assertGreaterEqual(contrast(text, fill), self.MINIMUM)
+
+    def test_the_border_is_visible_against_the_page(self):
+        # Not a text ratio — a border only has to be discernible.
+        self.assertGreater(
+            contrast(self._var("--bs-border-color"), self._var("--bs-body-bg")), 1.25
+        )

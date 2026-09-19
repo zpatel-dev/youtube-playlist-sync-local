@@ -1,0 +1,46 @@
+{% comment %}
+Playlist entries that were not downloaded, because YouTube does not describe
+them as songs — a lyric video, a film clip, a fan upload.
+
+Both links are here because opening the same id on YouTube Music is what
+answers the question fastest: an art track shows an album there, a video
+upload does not.
+{% endcomment %}
+{% load music_extras %}
+
+{% if held_videos %}
+<div class="alert alert-warning" role="alert">
+    <div class="mb-2">
+        <i class="bi bi-exclamation-triangle-fill"></i>
+        <strong>{{ held_total }} playlist entr{{ held_total|pluralize:"y,ies" }} not downloaded</strong>
+        &mdash; these do not look like songs from YouTube Music. Check one, then
+        approve it if you want it anyway.
+    </div>
+
+    {% for video in held_videos %}
+    <div class="d-flex flex-wrap justify-content-between align-items-start gap-2 border-top py-2">
+        <div class="me-auto" style="min-width:0">
+            <div class="fw-semibold text-break">{{ video.title|default:video.video_id }}</div>
+            <div class="small text-body-secondary text-break">
+                {{ video.uploader }}{% if video.duration %} &middot; {{ video.duration|hms }}{% endif %}
+            </div>
+            <div class="small text-warning-emphasis">{{ video.hold_reason }}</div>
+            <div class="small mt-1">
+                <a href="https://www.youtube.com/watch?v={{ video.video_id }}"
+                   target="_blank" rel="noopener noreferrer">
+                    <i class="bi bi-youtube"></i> YouTube
+                </a>
+                <a class="ms-2" href="https://music.youtube.com/watch?v={{ video.video_id }}"
+                   target="_blank" rel="noopener noreferrer">
+                    <i class="bi bi-music-note-list"></i> YouTube&nbsp;Music
+                </a>
+            </div>
+        </div>
+        <button type="button" class="btn btn-sm btn-outline-warning flex-shrink-0"
+                hx-post="{% url 'action_approve_video' video.video_id %}" hx-swap="none">
+            <i class="bi bi-download"></i> Download anyway
+        </button>
+    </div>
+    {% endfor %}
+</div>
+{% endif %}

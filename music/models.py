@@ -161,6 +161,10 @@ class Availability(models.TextChoices):
     PRIVATE = "PRIVATE", "Private"
     UNAVAILABLE = "UNAVAILABLE", "Unavailable"
     DELETED = "DELETED", "Deleted"
+    #: Downloadable, but it does not look like a song — a lyric video or a film
+    #: clip rather than the recording. Everything that queues a download
+    #: already filters on AVAILABLE, so holding one here needs no new query.
+    NEEDS_REVIEW = "NEEDS_REVIEW", "Needs review"
 
 
 class YoutubeVideo(models.Model):
@@ -189,6 +193,10 @@ class YoutubeVideo(models.Model):
         related_name="youtube_video",
     )
 
+    #: Why this entry was held, shown next to the link on the dashboard.
+    #: Empty for everything else — `availability` carries the state.
+    hold_reason = models.CharField(max_length=255, blank=True)
+
     fail_count = models.PositiveIntegerField(default=0)
     retry_at = models.DateTimeField(null=True, blank=True)
     last_error = models.TextField(blank=True)
@@ -211,6 +219,7 @@ class YoutubeVideo(models.Model):
     @property
     def is_downloaded(self) -> bool:
         return self.track_id is not None
+
 
 
 class ScanRoot(models.Model):
