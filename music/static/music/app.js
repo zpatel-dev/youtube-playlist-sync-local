@@ -383,7 +383,31 @@
     if (mobileSearch) {
         mobileSearch.addEventListener('shown.bs.collapse', function () {
             var field = mobileSearch.querySelector('input[type="search"]');
-            if (field) { field.focus(); }
+            if (field) { field.focus(); field.select(); }
         });
     }
+
+    // -------------------------------------------------- search select-all
+    //
+    // Clicking into the search box selects the last query, so a new search is
+    // type-over instead of clear-then-type. Only the click that focuses the
+    // box: a second click places the caret as usual, for editing a word.
+    //
+    // On `click`, not `focus`: the mouseup after a focus-time select() puts
+    // the caret back and drops the selection. A drag that selected part of
+    // the text is left alone. Keyboard focus needs nothing — tabbing into a
+    // field already selects it.
+
+    var pendingSelect = null;
+    document.addEventListener('pointerdown', function (event) {
+        var field = event.target.closest('.library-search input[type="search"]');
+        pendingSelect = field && field !== document.activeElement ? field : null;
+    });
+    document.addEventListener('click', function (event) {
+        var field = pendingSelect;
+        pendingSelect = null;
+        if (field && event.target === field && field.selectionStart === field.selectionEnd) {
+            field.select();
+        }
+    });
 })();

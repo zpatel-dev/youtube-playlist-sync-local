@@ -15,7 +15,7 @@ import time
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Callable, Iterator
+from typing import Any, Callable, Iterator, Mapping
 
 from django.conf import settings
 from django.db import transaction
@@ -353,6 +353,9 @@ def _postprocessors() -> list[dict[str, Any]]:
     if not settings.YOUTUBE_EMBED_METADATA:
         return chain
 
+    # FFmpegMetadataPP writes the file's date from `upload_date` only, so a
+    # 1998 song re-posted in 2016 would be tagged 2016. Overwrite it first.
+    chain.append(_release_date_as_upload_date_pp())
     chain.append({"key": "FFmpegMetadata", "add_metadata": True})
     # YouTube serves WebP thumbnails, which cannot go into an ID3 APIC frame.
     # One small image decode, nothing like the cost of the audio pass.
@@ -361,7 +364,25 @@ def _postprocessors() -> list[dict[str, Any]]:
     return chain
 
 
-def probe(video: YoutubeVideo, *, timeout: int = 30) -> dict[str, Any]:
+def _release_date_as_upload_date_pp() -> dict[str, Any]:
+    """Year precedence: release_date, then release_year, then upload_date."""
+    from yt_dlp.postprocessor.metadataparser import MetadataParserPP  # noqa: PLC0415
+
+    interpret = MetadataParserPP.Actions.INTERPRET
+    return {
+        "key": "MetadataParser",
+        "when": "pre_process",
+        # Later actions overwrite earlier ones; a missing field renders "NA" and never matches.
+        # yt-dlp parses upload_date as YYYYMMDD and crashes on anything else, so a bare year
+        # becomes Jan 1. release_year is sometimes junk (2245 was seen), hence the 19xx/20xx guard.
+        "actions": [
+            (interpret, "%(release_year)s0101", r"^(?P<upload_date>(?:19|20)\d\d0101)$"),
+            (interpret, "release_date", r"^(?P<upload_date>\d{8})$"),
+        ],
+    }
+
+
+def probe(video: YoutubeVideo, *, timeout: int = 30) -> Mapping[str, Any]:
     """Read a video's metadata without fetching any audio.
 
     This is what makes holding an entry cheap: `extract_info(download=False)`
@@ -369,6 +390,9 @@ def probe(video: YoutubeVideo, *, timeout: int = 30) -> dict[str, Any]:
     judge instead of a download each. The fields that matter — `track`,
     `artist`, `album`, `uploader` — are present here exactly as they would be
     after a download.
+
+    `Mapping`, not `dict`: yt-dlp's `_InfoDict` is a TypedDict, which a type
+    checker accepts as a read-only mapping but never as a plain `dict`.
     """
     url = video.url or WATCH_URL.format(video.video_id)
     opts = {
@@ -652,9 +676,13 @@ def _version_from_pip_output(text: str) -> str:
 # --- The yt-dlp boundary -----------------------------------------------
 
 
-def _ydl(opts: dict):
+def _ydl(opts: Any):
     """Construct a YoutubeDL. Every yt-dlp call goes through here, so the
-    import stays lazy and the tests have one name to patch."""
+    import stays lazy and the tests have one name to patch.
+
+    `opts` is `Any` for the same reason `info` is elsewhere: yt-dlp's stubs
+    want their own `_Params` TypedDict, which a plain dict built up key by key
+    never satisfies to a type checker."""
     return _ytdlp().YoutubeDL(opts)
 
 

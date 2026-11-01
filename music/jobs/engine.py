@@ -183,6 +183,20 @@ def reap(now=None) -> dict[str, int]:
     return {"reclaimed": reclaimed, "pruned": pruned}
 
 
+def clear_failed() -> int:
+    """Delete every FAILED job now, rather than after JOB_RETENTION_DAYS.
+
+    The same delete `reap` runs, without the age cutoff. Only log rows go:
+    retries are driven by `Track.retry_at` and `YoutubeVideo.retry_at`, never
+    by a Job row, so nothing that was due another attempt is forgotten.
+    """
+    cleared, _ = Job.objects.filter(state=JobState.FAILED).delete()
+    if cleared:
+        log.info("cleared %s failed job(s)", cleared)
+        events.bump("jobs")
+    return cleared
+
+
 def requeue_orphans() -> int:
     """At boot, return any RUNNING rows to the queue.
 

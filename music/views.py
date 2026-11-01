@@ -271,7 +271,12 @@ def _tracks_page(request) -> dict:
     if by not in IDENTIFY_PROVIDERS:
         by = ""
 
-    queryset = Track.objects.only(*TRACK_LIST_FIELDS)
+    # `youtube_id` links the title back to the video a download came from. A
+    # LEFT JOIN on the one-to-one's unique column inside the same SELECT;
+    # reading `track.youtube_video` in the row instead is a query per row.
+    queryset = Track.objects.only(*TRACK_LIST_FIELDS).annotate(
+        youtube_id=F("youtube_video__video_id")
+    )
     if query:
         # `path` is in here because an unidentified track has no title, artist
         # or album to match — the filename is the only handle it has.
@@ -534,12 +539,17 @@ def jobs(request):
         request,
     )
 
+    filters = _job_filters(state)
     context = {
         "nav": "jobs",
         "page_obj": page,
         "jobs": page.object_list,
         "state": state,
-        "filters": _job_filters(state),
+        "filters": filters,
+        # Off the grouped count the pills already ran, not a query of its own.
+        "failed_count": next(
+            f["count"] for f in filters if f["value"] == JobState.FAILED
+        ),
     }
     if request.headers.get("HX-Request"):
         return render(request, "music/_job_list.html", context)
@@ -1044,6 +1054,21 @@ def action_dismiss_video(request, pk: str):
     # Uploader-controlled text, safe only because the client builds the toast
     # with textContent (A11).
     return _notify(f"Rejected: {label}", "success")
+
+
+@require_POST
+def action_clear_failed_jobs(request):
+    """Drop failed jobs from the log. Confirmed in the UI.
+
+    Runs inline rather than as a job: one DELETE on the state index, no
+    filesystem or network, so there is nothing for a worker to do.
+    """
+    cleared = engine.clear_failed()
+    if not cleared:
+        return _notify("No failed jobs to clear.", "info")
+    return _notify(
+        f"Cleared {cleared} failed job{'' if cleared == 1 else 's'}.", "success"
+    )
 
 
 @require_POST

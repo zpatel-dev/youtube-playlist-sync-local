@@ -26,8 +26,18 @@ the field heading, which is why every cell carries one.
             {% if not track.cover_url %}<i class="bi bi-music-note-beamed"></i>{% endif %}
         </div>
         <div class="min-w-0 flex-grow-1">
+        {% comment %} `youtube_id` is annotated by the view, not a column, so it
+           is not in TRACK_LIST_FIELDS. A scanned file has none and stays plain
+           text. {% endcomment %}
+        {% firstof track.title track.path|basename as label %}
         <div class="fw-semibold clamp-2">
-            {% if track.title %}{{ track.title }}{% else %}{{ track.path|basename }}{% endif %}
+            {% if track.youtube_id %}
+                <a href="https://www.youtube.com/watch?v={{ track.youtube_id }}"
+                   target="_blank" rel="noopener noreferrer" title="Open on YouTube"
+                   class="link-body-emphasis link-underline-opacity-0 link-underline-opacity-75-hover">{{ label }}<i class="bi bi-youtube text-danger small ms-1" aria-hidden="true"></i></a>
+            {% else %}
+                {{ label }}
+            {% endif %}
         </div>
         <div class="small text-body-secondary text-truncate">
             {% if track.artist %}{{ track.artist }}{% endif %}

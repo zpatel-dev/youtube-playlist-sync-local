@@ -102,6 +102,46 @@ class JobsPageTests(TestCase):
                          "the jobs list gained a query per row")
 
 
+class ClearFailedJobsTests(TestCase):
+    def setUp(self):
+        now = timezone.now()
+        self.succeeded = Job.objects.create(
+            kind="library.scan_all", state=JobState.SUCCEEDED,
+            started_at=now, finished_at=now,
+        )
+        self.failed = Job.objects.create(
+            kind="identify.track", state=JobState.FAILED,
+            error="ProviderError", started_at=now, finished_at=now,
+        )
+        self.queued = Job.objects.create(kind="organize.plan_all")
+
+    def test_clear_removes_only_failed_jobs(self):
+        response = self.client.post(reverse("action_clear_failed_jobs"))
+        self.assertEqual(response.status_code, 204)
+        self.assertIn("Cleared 1 failed job.", response["HX-Trigger"])
+        self.assertFalse(Job.objects.filter(pk=self.failed.pk).exists())
+        # An active job is never collateral: it may be running right now.
+        self.assertTrue(Job.objects.filter(pk=self.queued.pk).exists())
+        self.assertTrue(Job.objects.filter(pk=self.succeeded.pk).exists())
+
+    def test_clear_with_nothing_failed_says_so(self):
+        self.failed.delete()
+        response = self.client.post(reverse("action_clear_failed_jobs"))
+        self.assertEqual(response.status_code, 204)
+        self.assertIn("No failed jobs to clear.", response["HX-Trigger"])
+
+    def test_clear_is_post_only(self):
+        response = self.client.get(reverse("action_clear_failed_jobs"))
+        self.assertEqual(response.status_code, 405)
+        self.assertTrue(Job.objects.filter(pk=self.failed.pk).exists())
+
+    def test_button_appears_only_while_something_failed(self):
+        url = reverse("action_clear_failed_jobs")
+        self.assertIn(url, self.client.get(reverse("jobs")).content.decode())
+        self.failed.delete()
+        self.assertNotIn(url, self.client.get(reverse("jobs")).content.decode())
+
+
 class JobDetailTests(TestCase):
     def setUp(self):
         now = timezone.now()

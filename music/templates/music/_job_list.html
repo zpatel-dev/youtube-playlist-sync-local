@@ -7,6 +7,19 @@ filter and page controls consistent with the rows they describe.
      hx-get="{% url 'jobs' %}?state={{ state }}&page={{ page_obj.number }}"
      hx-trigger="sse:update from:body"
      hx-swap="outerHTML">
+{% comment %}
+Inside the live fragment, not beside the filter pills, so the button and its
+count go away by themselves once the clear lands.
+{% endcomment %}
+{% if failed_count %}
+<div class="d-flex justify-content-end mb-2">
+    <button type="button" class="btn btn-sm btn-outline-danger"
+            hx-post="{% url 'action_clear_failed_jobs' %}" hx-swap="none"
+            hx-confirm="Remove {{ failed_count }} failed job{{ failed_count|pluralize }} from the log?&#10;&#10;Nothing is retried and no file is touched; only the log entries go.">
+        <i class="bi bi-trash3"></i> Clear {{ failed_count }} failed
+    </button>
+</div>
+{% endif %}
 <div class="card">
     <div class="table-responsive">
         <table class="table table-sm align-middle mb-0 job-table">

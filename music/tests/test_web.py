@@ -204,6 +204,20 @@ class FragmentTests(TestCase):
             response = self.client.get(reverse("fragment_tracks"))
         self.assertEqual(response.status_code, 200)
 
+    def test_a_downloaded_track_links_its_title_to_youtube(self):
+        downloaded = make_track(path="/music/incoming/dl.mp3", title="From A Video")
+        YoutubeVideo.objects.create(video_id="vid12345678", track=downloaded)
+
+        # Still two: the video id rides the page SELECT as a join, not a
+        # lookup per row.
+        with self.assertNumQueries(2):
+            body = self.client.get(reverse("fragment_tracks")).content.decode()
+        self.assertIn('href="https://www.youtube.com/watch?v=vid12345678"', body)
+
+    def test_a_scanned_track_has_no_youtube_link(self):
+        body = self.client.get(reverse("fragment_tracks")).content.decode()
+        self.assertNotIn("youtube.com/watch", body)
+
 
 class ReviewTests(TestCase):
     def test_manifest_shows_source_and_destination(self):

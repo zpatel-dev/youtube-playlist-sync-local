@@ -624,3 +624,40 @@ class DownloadMetadataTests(TestCase):
         self.assertEqual(keys[0], "FFmpegVideoRemuxer")
         self.assertIn("FFmpegMetadata", keys)
         self.assertIn("EmbedThumbnail", keys)
+
+    def test_the_date_override_runs_before_ffmpeg_metadata(self):
+        # pre_process runs before every post_process step, FFmpegMetadata included.
+        chain = self._run()["postprocessors"]
+        parser = next(pp for pp in chain if pp["key"] == "MetadataParser")
+        self.assertEqual(parser["when"], "pre_process")
+
+    def test_year_precedence_release_date_then_release_year_then_upload_date(self):
+        from datetime import datetime
+
+        from yt_dlp import YoutubeDL
+        from yt_dlp.postprocessor.metadataparser import MetadataParserPP
+
+        cases = [
+            ({"release_date": "19980708", "release_year": 1998}, "19980708"),
+            ({"release_date": "19630101", "release_year": 2020}, "19630101"),
+            ({"release_year": 1975}, "19750101"),
+            ({"release_year": 2245}, "20161224"),
+            ({}, "20161224"),
+        ]
+        actions = youtube._release_date_as_upload_date_pp()["actions"]
+        with YoutubeDL({"quiet": True, "no_warnings": True}) as ydl:
+            parser = MetadataParserPP(ydl, actions)
+            for fields, expected in cases:
+                with self.subTest(fields=fields):
+                    _, info = parser.run({"id": "x", "upload_date": "20161224", **fields})
+                    self.assertEqual(info["upload_date"], expected)
+                    # yt-dlp's date filter parses it this way and aborts the download otherwise.
+                    datetime.strptime(info["upload_date"], "%Y%m%d")
+
+    def test_release_date_override_is_omitted_when_embedding_is_off(self):
+        # No metadata step runs, so the MetadataParser would do nothing but
+        # add noise to the chain. The flag that gates FFmpegMetadata gates
+        # this too.
+        with override_settings(YOUTUBE_EMBED_METADATA=False):
+            keys = self._keys(self._run())
+        self.assertNotIn("MetadataParser", keys)

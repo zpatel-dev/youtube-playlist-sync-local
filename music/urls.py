@@ -37,6 +37,11 @@ urlpatterns = [
     path("actions/sync-youtube/", views.action_sync_youtube, name="action_sync_youtube"),
     path("actions/update-ytdlp/", views.action_update_ytdlp, name="action_update_ytdlp"),
     path(
+        "actions/jobs/clear-failed/",
+        views.action_clear_failed_jobs,
+        name="action_clear_failed_jobs",
+    ),
+    path(
         "actions/track/<int:pk>/suggest/",
         views.action_suggest_track,
         name="action_suggest_track",
